@@ -16,6 +16,9 @@ class OmniVoiceWrapper:
         if self._is_loaded:
             return
         
+        # Use HuggingFace mirror to prevent hanging downloads
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+        
         print("[OmniVoice] Loading model (this might take a while)...")
         from omnivoice import OmniVoice
         self.model = OmniVoice.from_pretrained(

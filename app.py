@@ -622,6 +622,7 @@ def build_ui():
                 enrolled_gender_state,
                 enrolled_audio_state,
                 vc_model_state,
+                cfg_rate_state,
             ],
             outputs=practice_outputs,
         )
