@@ -161,9 +161,8 @@ class EZVCWrapper:
         # 1. Extract units from source audio (which is the speech to convert)
         try:
             print(f"[EZ-VC] Extracting units from {source_audio_path}...")
-            units = extract_units(self.xeus_model, self.apply_kmeans, source_audio_path, self.device)
-            # EZ-VC format expects units as a string of space-separated integers
-            unit_str = " ".join([str(u) for u in units.tolist()])
+            # Note: utils_xeus.py defines extract_units(audio_path, xeus_model, apply_kmeans, device)
+            unit_str = extract_units(source_audio_path, self.xeus_model, self.apply_kmeans, self.device)
         except Exception as e:
             print(f"[EZ-VC] Error extracting units: {e}")
             raise e

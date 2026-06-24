@@ -39,7 +39,8 @@ cd ..
 # 5. Install accent trainer dependencies
 echo "[5/6] Installing accent trainer dependencies..."
 pip install -r requirements.txt
-pip install --force-reinstall "protobuf==3.20.3"
+pip install cached-path
+pip install --upgrade protobuf
 
 # 6. Create cache directories
 echo "[6/6] Creating cache directories..."
