@@ -33,9 +33,10 @@ fi
 echo "[4/6] Installing EZ-VC dependencies..."
 cd EZ-VC
 git config --global --add safe.directory "$PWD"
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$(python -c 'import sys; import os; print(os.path.join(sys.prefix, "bin"))'):$PATH"
 apt-get update && apt-get install -y pkg-config
-pip install x_transformers==1.31.14 torch-einops-utils "cmake<3.27.0" sentencepiece
+pip install x_transformers==1.31.14 torch-einops-utils "cmake<3.27.0"
+pip install sentencepiece==0.1.97 --no-build-isolation
 pip install -e .
 pip install 'espnet @ git+https://github.com/wanchichen/espnet.git@ssl'
 cd ..
@@ -45,6 +46,7 @@ echo "[5/6] Installing accent trainer dependencies..."
 pip install -r requirements.txt
 pip install cached-path
 pip install --upgrade protobuf
+pip install "numpy<2"
 
 # 6. Create cache directories
 echo "[6/6] Creating cache directories..."
