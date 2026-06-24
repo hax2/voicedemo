@@ -14,12 +14,38 @@ import numpy as np
 import torch
 import torchaudio
 
+MIN_SAFE_TORCH_LOAD_VERSION = (2, 6)
+
 # Path to the cloned seed-vc repository
 SEED_VC_PATH = os.environ.get("SEED_VC_PATH", os.path.join(os.path.dirname(__file__), "seed-vc"))
 
 # Cache directory for converted audio
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cached_vc")
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+def _torch_version_tuple(version):
+    core_version = version.split("+", 1)[0]
+    parts = core_version.split(".")[:2]
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError:
+        return (0, 0)
+
+
+def _require_safe_torch_load_version():
+    if _torch_version_tuple(torch.__version__) >= MIN_SAFE_TORCH_LOAD_VERSION:
+        return
+
+    min_version = ".".join(str(part) for part in MIN_SAFE_TORCH_LOAD_VERSION)
+    raise RuntimeError(
+        "Seed-VC checkpoint loading now requires PyTorch "
+        f"{min_version}.0 or newer because older torch.load versions are blocked "
+        "by upstream security checks for CVE-2025-32434. "
+        f"Current torch version: {torch.__version__}. "
+        'On the server, run "git pull" and then "bash setup_server.sh" to install '
+        "the pinned torch/torchaudio versions."
+    )
 
 
 class SeedVCWrapper:
@@ -68,6 +94,8 @@ class SeedVCWrapper:
         # Load V2 config
         config_path = os.path.join(self.seed_vc_path, "configs", "v2", "vc_wrapper.yaml")
         cfg = DictConfig(yaml.safe_load(open(config_path, "r")))
+
+        _require_safe_torch_load_version()
 
         # Instantiate wrapper
         self.vc_wrapper = instantiate(cfg)

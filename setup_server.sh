@@ -61,6 +61,15 @@ pip install -r requirements.txt
 pip install cached-path
 pip install --upgrade protobuf
 pip install "numpy<2"
+pip install --upgrade "torch==2.6.0" "torchaudio==2.6.0"
+
+python - <<'PY'
+import torch
+import torchaudio
+
+print(f"Verified torch {torch.__version__}")
+print(f"Verified torchaudio {torchaudio.__version__}")
+PY
 
 # 6. Create symlink for EZ-VC xeus configs
 echo "[8/8] Fixing EZ-VC xeus paths..."
