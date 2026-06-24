@@ -30,7 +30,7 @@ else
 fi
 
 # 4. Install EZ-VC dependencies
-echo "[4/6] Installing EZ-VC dependencies..."
+echo "[4/8] Installing EZ-VC dependencies..."
 cd EZ-VC
 git config --global --add safe.directory '*'
 export PATH="$HOME/.local/bin:$(python -c 'import sys; import os; print(os.path.join(sys.prefix, "bin"))'):$PATH"
@@ -41,21 +41,35 @@ pip install -e .
 pip install 'espnet @ git+https://github.com/wanchichen/espnet.git@ssl'
 cd ..
 
+# 4.5 Clone OmniVoice if not already present
+if [ ! -d "OmniVoice" ]; then
+    echo "[5/8] Cloning OmniVoice repository..."
+    git clone https://github.com/k2-fsa/OmniVoice.git
+else
+    echo "[5/8] OmniVoice already cloned, skipping."
+fi
+
+# 4.6 Install OmniVoice dependencies
+echo "[6/8] Installing OmniVoice dependencies..."
+cd OmniVoice
+pip install -e .
+cd ..
+
 # 5. Install accent trainer dependencies
-echo "[5/6] Installing accent trainer dependencies..."
+echo "[7/8] Installing accent trainer dependencies..."
 pip install -r requirements.txt
 pip install cached-path
 pip install --upgrade protobuf
 pip install "numpy<2"
 
 # 6. Create symlink for EZ-VC xeus configs
-echo "[6/7] Fixing EZ-VC xeus paths..."
+echo "[8/8] Fixing EZ-VC xeus paths..."
 if [ ! -d "xeus" ]; then
     ln -s EZ-VC/src/f5_tts/infer/xeus xeus
 fi
 
 # 7. Create cache directories
-echo "[7/7] Creating cache directories..."
+echo "Creating cache directories..."
 mkdir -p cached_tts
 mkdir -p cached_vc
 mkdir -p checkpoints
