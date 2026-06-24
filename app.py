@@ -43,8 +43,8 @@ def init_seed_vc(seed_vc_path=None, compile_model=False):
 # ──────────────────────────────────────────────
 # Core pipeline functions
 # ──────────────────────────────────────────────
-def enroll_voice(audio_path, gender):
-    """Process voice enrollment."""
+def enroll_voice(audio_path, gender, progress=gr.Progress()):
+    """Process voice enrollment and bulk-generate all target sentences."""
     if audio_path is None:
         return "❌ Please record or upload a voice sample first.", None
 
@@ -57,14 +57,56 @@ def enroll_voice(audio_path, gender):
             return f"⚠️ Recording is too short ({duration:.1f}s). Please record at least 5 seconds.", None
         if duration > 30:
             return f"⚠️ Recording is too long ({duration:.1f}s). Please keep it under 30 seconds.", None
-        return (
+
+        status = (
             f"✅ Voice enrolled successfully!\n"
             f"📊 Duration: {duration:.1f}s | Sample rate: {sr}Hz\n"
             f"🗣️ Gender: {gender.title()}\n\n"
-            f"Now go to the **Practice** tab to start training!"
-        ), audio_path
+        )
+
+        # Check if Seed-VC is loaded for bulk generation
+        global vc_wrapper
+        if vc_wrapper is not None:
+            status += "🎙️ Seed-VC v2 active. Bulk-generating all sentences in your voice...\n"
+            print("[App] Starting bulk voice conversion for enrolled voice...")
+
+            # List of all sentences to convert
+            sentences_to_convert = []
+            for lang in ["en-US", "es-ES"]:
+                lang_sentences = get_sentences(lang)
+                for i, s in enumerate(lang_sentences):
+                    ref_path = get_reference_audio_path(lang, gender, i)
+                    if ref_path and os.path.exists(ref_path):
+                        sentences_to_convert.append((lang, i, ref_path, s["text"]))
+
+            total = len(sentences_to_convert)
+            if total > 0:
+                progress(0, desc="Starting voice conversion...")
+                for idx, (lang, i, ref_path, text) in enumerate(sentences_to_convert):
+                    desc = f"Converting ({lang}) {idx+1}/{total}: {text[:25]}..."
+                    progress(idx / total, desc=desc)
+                    try:
+                        # This runs conversion and caches the output path
+                        vc_wrapper.convert_voice(
+                            source_audio_path=ref_path,
+                            reference_audio_path=audio_path,
+                            diffusion_steps=25,
+                            length_adjust=1.0,
+                            inference_cfg_rate=0.7,
+                        )
+                    except Exception as e:
+                        print(f"[App] Error bulk-converting sentence {i} in {lang}: {e}")
+                
+                progress(1.0, desc="All conversions complete!")
+                status += f"⚡ Bulk-generation complete! All {total} sentences are pre-converted and will play instantly in the Practice tab."
+            else:
+                status += "⚠️ No reference audio files found to convert."
+        else:
+            status += "⚠️ Seed-VC not loaded. Voice conversion is offline (playing raw reference audio)."
+
+        return status, audio_path
     except Exception as e:
-        return f"❌ Error processing audio: {str(e)}", None
+        return f"❌ Error processing voice enrollment: {str(e)}", None
 
 
 def get_sentence_choices(language):
