@@ -85,6 +85,33 @@ class EZVCWrapper:
         self.xeus_model = load_xeus_model(self.device).eval()
         self.apply_kmeans = ApplyKmeans(self.device)
 
+        # Apply monkey-patch to BigVGAN to fix huggingface_hub>=0.24.0 incompatibility
+        try:
+            import sys
+            import os
+            # EZ-VC path is already handled above, but let's safely import BigVGAN
+            ezvc_path = os.path.abspath("EZ-VC")
+            if ezvc_path not in sys.path:
+                sys.path.append(ezvc_path)
+            from third_party.BigVGAN.bigvgan import BigVGAN
+            
+            if not hasattr(BigVGAN, '_patched_from_pretrained'):
+                orig_from_pretrained = BigVGAN._from_pretrained
+                
+                @classmethod
+                def patched_from_pretrained(cls, *args, **kwargs):
+                    if 'proxies' not in kwargs:
+                        kwargs['proxies'] = None
+                    if 'resume_download' not in kwargs:
+                        kwargs['resume_download'] = False
+                    return orig_from_pretrained.__func__(cls, *args, **kwargs)
+                    
+                BigVGAN._from_pretrained = patched_from_pretrained
+                BigVGAN._patched_from_pretrained = True
+                print("[EZ-VC] Successfully monkey-patched BigVGAN for latest huggingface_hub compatibility.")
+        except Exception as e:
+            print(f"[EZ-VC] Note: Could not apply BigVGAN monkey-patch (might not be needed): {e}")
+
         # Load vocoder
         print("[EZ-VC] Loading Vocoder...")
         self.vocoder = load_vocoder(vocoder_name="bigvgan", device=self.device)
