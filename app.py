@@ -15,6 +15,10 @@ Usage:
 import argparse
 import os
 import gradio as gr
+import torch
+
+# Disable cuDNN to prevent CUDNN_STATUS_NOT_INITIALIZED on servers with missing/broken cuDNN libraries
+torch.backends.cudnn.enabled = False
 
 from sentences.data import SENTENCES, get_sentences, get_reference_audio_path
 from audio_analysis import create_spectrogram, create_waveform, create_pitch_contour, create_comparison
