@@ -20,18 +20,28 @@ class OmniVoiceWrapper:
         os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
         if "HF_ENDPOINT" in os.environ:
             del os.environ["HF_ENDPOINT"]
-        
+            
         print("[OmniVoice] Loading model (this might take a while)...")
-        from huggingface_hub import snapshot_download
-        print("[OmniVoice] Pre-downloading model files sequentially to avoid hang...")
-        snapshot_download(repo_id="k2-fsa/OmniVoice", max_workers=1)
-        
         from omnivoice import OmniVoice
-        self.model = OmniVoice.from_pretrained(
-            "k2-fsa/OmniVoice", 
-            device_map="cuda:0", 
-            dtype=torch.float16
-        )
+        
+        # If the user cloned the model locally to bypass network hangs, use the local folder
+        local_model_path = "./OmniVoice_Model"
+        if os.path.exists(local_model_path):
+            print(f"[OmniVoice] Found local model at {local_model_path}, loading from disk...")
+            self.model = OmniVoice.from_pretrained(
+                local_model_path, 
+                device_map="cuda:0", 
+                dtype=torch.float16
+            )
+        else:
+            from huggingface_hub import snapshot_download
+            print("[OmniVoice] Pre-downloading model files sequentially to avoid hang...")
+            snapshot_download(repo_id="k2-fsa/OmniVoice", max_workers=1)
+            self.model = OmniVoice.from_pretrained(
+                "k2-fsa/OmniVoice", 
+                device_map="cuda:0", 
+                dtype=torch.float16
+            )
         self._is_loaded = True
         print("[OmniVoice] Model loaded successfully.")
 
