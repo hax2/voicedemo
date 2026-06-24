@@ -109,61 +109,73 @@ def enroll_voice(audio_path, gender, progress=gr.Progress()):
         return f"❌ Error processing voice enrollment: {str(e)}", None
 
 
-def get_sentence_choices(language):
-    """Get sentence choices for the dropdown."""
+def update_practice_sentences(language, gender, enrolled_audio):
+    """Update all 10 sentence cards in the Practice tab."""
     sentences = get_sentences(language)
-    return [f"{i}|{s['text']}  [{s['focus']}]" for i, s in enumerate(sentences)]
-
-
-def update_sentences(language):
-    """Update sentence dropdown when language changes."""
-    choices = get_sentence_choices(language)
-    return gr.update(choices=choices, value=choices[0] if choices else None)
-
-
-def generate_ideal(sentence_choice, language, gender, enrolled_audio):
-    """Generate ideal pronunciation by converting pre-generated reference audio
-    through Seed-VC v2 using the user's enrolled voice."""
-    if not sentence_choice:
-        return None, None, "❌ Please select a sentence first."
-
-    # Parse sentence index from choice string ("0|text  [focus]")
-    sentence_index = int(sentence_choice.split("|")[0])
-
-    # Step 1: Look up the pre-generated reference audio
-    ref_path = get_reference_audio_path(language, gender, sentence_index)
-    if ref_path is None:
-        return None, None, (
-            f"❌ Reference audio not found for sentence {sentence_index + 1}.\n"
-            f"Run `python generate_references.py` first to create the audio files."
-        )
-
-    status = f"🔊 Loaded reference audio: sentence {sentence_index + 1}\n"
-
-    # Step 2: Voice conversion with Seed-VC v2
-    if vc_wrapper is not None and enrolled_audio is not None:
-        try:
-            status += "🎙️ Converting to your voice with Seed-VC v2...\n"
-            # source = pre-generated TTS audio (correct pronunciation)
-            # reference = user's enrolled voice (timbre to clone)
-            converted_path = vc_wrapper.convert_voice(
-                source_audio_path=ref_path,
-                reference_audio_path=enrolled_audio,
-                diffusion_steps=25,
-                length_adjust=1.0,
-                inference_cfg_rate=0.7,
-            )
-            status += "✅ Voice conversion complete! Listen to your ideal pronunciation below."
-            return converted_path, ref_path, status
-        except Exception as e:
-            status += f"⚠️ Voice conversion failed ({str(e)}). Playing raw reference audio instead.\n"
-            return ref_path, ref_path, status
-    else:
-        if enrolled_audio is None:
-            status += "⚠️ No voice enrolled — playing raw reference audio. Enroll your voice for a personalized version.\n"
-        else:
-            status += "⚠️ Seed-VC not loaded — playing raw reference audio.\n"
-        return ref_path, ref_path, status
+    outputs = []
+    
+    global vc_wrapper
+    import hashlib
+    import os
+    from seed_vc_wrapper import CACHE_DIR
+    
+    for i in range(10):
+        sentence_html_val = ""
+        ref_path = None
+        ideal_path = None
+        visible = (i < len(sentences))
+        
+        if visible:
+            s = sentences[i]
+            text = s["text"]
+            focus = s["focus"]
+            diff = "Beginner" if i < 5 else "Intermediate"
+            sentence_html_val = f"""
+            <div style="padding: 10px 15px; border-radius: 6px; background: #1a1a2e; border: 1px solid #162447;">
+                <p style="color: #e94560; font-size: 0.8em; font-weight: bold; text-transform: uppercase; margin: 0 0 3px 0; letter-spacing: 0.5px;">Sentence #{i+1} — {diff}</p>
+                <h3 style="font-size: 1.3em; margin: 0 0 5px 0; color: #ffffff; line-height: 1.2;">{text}</h3>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #0f3460; color: #e94560; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; font-weight: bold;">Focus</span>
+                    <p style="color: #c5c5c5; margin: 0; font-size: 0.85em;">{focus}</p>
+                </div>
+            </div>
+            """
+            ref_path = get_reference_audio_path(language, gender, i)
+            
+            if vc_wrapper is not None and enrolled_audio is not None and ref_path is not None:
+                # Re-generate the cache key to look up the file
+                cache_key = hashlib.md5(
+                    f"{ref_path}:{enrolled_audio}:25:1.0:0.7".encode()
+                ).hexdigest()
+                cached_file = os.path.join(CACHE_DIR, f"{cache_key}.wav")
+                
+                if os.path.exists(cached_file):
+                    ideal_path = cached_file
+                else:
+                    # Fallback to run conversion on the fly if not in cache (e.g. if bulk conversion failed or skipped)
+                    try:
+                        ideal_path = vc_wrapper.convert_voice(
+                            source_audio_path=ref_path,
+                            reference_audio_path=enrolled_audio,
+                            diffusion_steps=25,
+                            length_adjust=1.0,
+                            inference_cfg_rate=0.7,
+                        )
+                    except Exception as e:
+                        print(f"[App] Error generating ideal voice for sentence {i}: {e}")
+                        ideal_path = ref_path
+            else:
+                ideal_path = ref_path
+        
+        # We append: sentence_html, native_player, cloned_player, attempt_recorder, comparison_plot, comparison_status
+        outputs.append(gr.update(value=sentence_html_val, visible=visible))
+        outputs.append(gr.update(value=ref_path, visible=visible))
+        outputs.append(gr.update(value=ideal_path, visible=visible))
+        outputs.append(gr.update(value=None, visible=visible))  # Clear attempt recording
+        outputs.append(gr.update(value=None, visible=visible))  # Clear comparison plot
+        outputs.append(gr.update(value="", visible=visible))    # Clear comparison status
+        
+    return outputs
 
 
 def run_comparison(ideal_audio, attempt_audio):
@@ -276,26 +288,14 @@ def build_ui():
                     label="Status", interactive=False, lines=4
                 )
 
-                enroll_btn.click(
-                    fn=enroll_voice,
-                    inputs=[enrollment_audio, gender_select],
-                    outputs=[enrollment_status, enrolled_audio_state],
-                )
-                gender_select.change(
-                    fn=lambda g: g,
-                    inputs=[gender_select],
-                    outputs=[enrolled_gender_state],
-                )
-
             # ═══════════════════════════════════════════
             # TAB 2: Practice
             # ═══════════════════════════════════════════
             with gr.Tab("📝 Practice", id="practice"):
                 gr.Markdown("""
                 ### Step 2: Practice Pronunciation
-                Select a target language and sentence. The system will convert the reference 
-                pronunciation into your voice using Seed-VC v2, so you can hear how *you* should sound.
-                Then record yourself and compare!
+                Choose your target language. Below is the list of target sentences.
+                Listen to the native reference, compare it to your cloned "ideal" voice, record your attempt, and run the comparison analysis!
                 """)
 
                 with gr.Row():
@@ -308,83 +308,59 @@ def build_ui():
                         label="🌍 Target Language",
                     )
 
-                # Initialize sentence list
-                initial_sentences = get_sentence_choices("en-US")
-                sentence_select = gr.Dropdown(
-                    choices=initial_sentences,
-                    value=initial_sentences[0] if initial_sentences else None,
-                    label="📄 Select a Sentence",
-                    info="Each sentence targets specific pronunciation challenges",
-                )
+                # Dynamically build 10 sentence cards
+                sentence_htmls = []
+                native_players = []
+                cloned_players = []
+                attempt_recorders = []
+                compare_btns = []
+                comparison_statuses = []
+                comparison_plots = []
 
-                language_select.change(
-                    fn=update_sentences,
-                    inputs=[language_select],
-                    outputs=[sentence_select],
-                )
+                for i in range(10):
+                    with gr.Group():
+                        s_html = gr.HTML(value="")
+                        sentence_htmls.append(s_html)
 
-                generate_btn = gr.Button(
-                    "🔊 Generate Ideal Pronunciation (in Your Voice)",
-                    variant="primary",
-                    size="lg",
-                )
-                generation_status = gr.Textbox(
-                    label="Generation Status", interactive=False, lines=4
-                )
+                        with gr.Row():
+                            with gr.Column(scale=1):
+                                ref_player = gr.Audio(
+                                    label="📖 Native Reference",
+                                    type="filepath",
+                                    interactive=False,
+                                )
+                                native_players.append(ref_player)
+                            with gr.Column(scale=1):
+                                clone_player = gr.Audio(
+                                    label="🎯 Cloned Ideal (Your Voice)",
+                                    type="filepath",
+                                    interactive=False,
+                                )
+                                cloned_players.append(clone_player)
+                            with gr.Column(scale=1):
+                                attempt_player = gr.Audio(
+                                    sources=["microphone"],
+                                    type="filepath",
+                                    label="🎤 Your Attempt",
+                                )
+                                attempt_recorders.append(attempt_player)
 
-                gr.Markdown("---")
+                        with gr.Accordion("📊 Comparison Analysis", open=False):
+                            with gr.Row():
+                                with gr.Column(scale=1):
+                                    comp_btn = gr.Button("📊 Analyze & Compare", variant="secondary", size="sm")
+                                    compare_btns.append(comp_btn)
+                                    comp_status = gr.Textbox(
+                                        label="Comparison Notes",
+                                        interactive=False,
+                                        lines=3,
+                                    )
+                                    comparison_statuses.append(comp_status)
+                                with gr.Column(scale=2):
+                                    comp_plot = gr.Plot(label="Spectrogram / Pitch Comparison")
+                                    comparison_plots.append(comp_plot)
 
-                with gr.Row(equal_height=True):
-                    with gr.Column():
-                        gr.Markdown("#### 🎯 Ideal Pronunciation")
-                        ideal_audio = gr.Audio(
-                            label="How it should sound (in your voice)",
-                            type="filepath",
-                            interactive=False,
-                        )
-                        gr.Markdown("#### 📖 Original Reference")
-                        reference_audio_player = gr.Audio(
-                            label="Original TTS reference (native speaker)",
-                            type="filepath",
-                            interactive=False,
-                        )
-                    with gr.Column():
-                        gr.Markdown("#### 🎤 Your Attempt")
-                        attempt_audio = gr.Audio(
-                            sources=["microphone"],
-                            type="filepath",
-                            label="Record yourself saying the sentence",
-                        )
-
-                generate_btn.click(
-                    fn=generate_ideal,
-                    inputs=[sentence_select, language_select, enrolled_gender_state, enrolled_audio_state],
-                    outputs=[ideal_audio, reference_audio_player, generation_status],
-                ).then(
-                    fn=lambda x: x,
-                    inputs=[ideal_audio],
-                    outputs=[ideal_audio_state],
-                )
-
-                gr.Markdown("---")
-
-                compare_btn = gr.Button(
-                    "📊 Compare Pronunciation",
-                    variant="secondary",
-                    size="lg",
-                )
-                comparison_status = gr.Textbox(
-                    label="Comparison Notes", interactive=False, lines=3
-                )
-                comparison_plot = gr.Plot(
-                    label="Pronunciation Comparison",
-                )
-
-                compare_btn.click(
-                    fn=run_comparison,
-                    inputs=[ideal_audio, attempt_audio],
-                    outputs=[comparison_plot, comparison_status],
-                )
+                        gr.HTML("<div style='margin-bottom: 25px;'></div>")
 
             # ═══════════════════════════════════════════
             # TAB 3: Visualizations
@@ -417,12 +393,6 @@ def build_ui():
                         create_waveform(audio_path, "Waveform"),
                         create_pitch_contour(audio_path, "Pitch Contour (F0)"),
                     )
-
-                analyze_btn.click(
-                    fn=analyze_audio,
-                    inputs=[analysis_audio],
-                    outputs=[spec_plot, wave_plot, pitch_plot],
-                )
 
             # ═══════════════════════════════════════════
             # TAB 4: About
@@ -464,6 +434,75 @@ def build_ui():
                 
                 10 sentences per language × 2 genders = 40 pre-generated reference audio files.
                 """)
+
+        # ──────────────────────────────────────────────
+        # Event Listeners & Event Bindings
+        # ──────────────────────────────────────────────
+        
+        # Collect outputs for practice tab sentence cards
+        practice_outputs = []
+        for i in range(10):
+            practice_outputs.extend([
+                sentence_htmls[i],
+                native_players[i],
+                cloned_players[i],
+                attempt_recorders[i],
+                comparison_plots[i],
+                comparison_statuses[i],
+            ])
+
+        # TAB 1: Voice Enrollment
+        enroll_btn.click(
+            fn=enroll_voice,
+            inputs=[enrollment_audio, gender_select],
+            outputs=[enrollment_status, enrolled_audio_state],
+        ).then(
+            fn=update_practice_sentences,
+            inputs=[language_select, enrolled_gender_state, enrolled_audio_state],
+            outputs=practice_outputs,
+        )
+
+        gender_select.change(
+            fn=lambda g: g,
+            inputs=[gender_select],
+            outputs=[enrolled_gender_state],
+        )
+
+        # TAB 2: Practice (Sentence events: language changes and comparison clicks)
+        language_select.change(
+            fn=update_practice_sentences,
+            inputs=[
+                language_select,
+                enrolled_gender_state,
+                enrolled_audio_state,
+            ],
+            outputs=practice_outputs,
+        )
+
+        for i in range(10):
+            compare_btns[i].click(
+                fn=run_comparison,
+                inputs=[cloned_players[i], attempt_recorders[i]],
+                outputs=[comparison_plots[i], comparison_statuses[i]],
+            )
+
+        # TAB 3: Analysis
+        analyze_btn.click(
+            fn=analyze_audio,
+            inputs=[analysis_audio],
+            outputs=[spec_plot, wave_plot, pitch_plot],
+        )
+
+        # Trigger initial load on app startup
+        demo.load(
+            fn=update_practice_sentences,
+            inputs=[
+                language_select,
+                enrolled_gender_state,
+                enrolled_audio_state,
+            ],
+            outputs=practice_outputs,
+        )
 
         # ── Footer ──
         gr.HTML("""
