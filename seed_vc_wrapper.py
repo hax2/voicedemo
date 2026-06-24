@@ -154,6 +154,11 @@ class SeedVCWrapper:
         if use_cache and os.path.exists(output_path):
             return output_path
 
+        # The Seed-VC v2 cfm.py expects inference_cfg_rate to be an iterable (e.g., [0.5, 0.5])
+        cfg_rate_arg = inference_cfg_rate
+        if isinstance(cfg_rate_arg, (float, int)):
+            cfg_rate_arg = [float(cfg_rate_arg), float(cfg_rate_arg)]
+
         # Run voice conversion using the wrapper's convert_voice method
         with torch.no_grad():
             converted_audio = self.vc_wrapper.convert_voice(
@@ -161,7 +166,7 @@ class SeedVCWrapper:
                 target_audio_path=reference_audio_path,
                 diffusion_steps=diffusion_steps,
                 length_adjust=length_adjust,
-                inference_cfg_rate=inference_cfg_rate,
+                inference_cfg_rate=cfg_rate_arg,
                 device=self.device,
                 dtype=self.dtype,
             )
