@@ -33,6 +33,7 @@ fi
 echo "[4/6] Installing EZ-VC dependencies..."
 cd EZ-VC
 git config --global --add safe.directory "$PWD"
+pip install x_transformers==1.31.14 torch-einops-utils
 pip install -e .
 pip install 'espnet @ git+https://github.com/wanchichen/espnet.git@ssl'
 cd ..
