@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+seed-vc/
+checkpoints/
+*.wav
+*.mp3
+cached_tts/
+cached_vc/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
+flagged/
