@@ -51,27 +51,29 @@ class OmniVoiceWrapper:
         """
         self.load()
         
-        # Build cache key
-        if use_cache and reference_audio_path and os.path.exists(reference_audio_path):
-            with open(reference_audio_path, "rb") as f:
-                ref_hash = hashlib.md5(f.read()).hexdigest()
-            text_hash = hashlib.md5(text.encode("utf-8")).hexdigest()
-            cache_name = f"omnivoice_{ref_hash[:10]}_{text_hash[:10]}.wav"
-            cache_path = os.path.join(CACHE_DIR, cache_name)
+        if not self.model:
+            raise RuntimeError("OmniVoice model failed to load.")
             
-            if os.path.exists(cache_path):
-                return cache_path
-        else:
-            cache_path = os.path.join(CACHE_DIR, f"omnivoice_temp_{int(time.time())}.wav")
+        import torch
 
+        # Generate cache key
+        cache_key = f"omnivoice_{hash(text)}_{os.path.basename(reference_audio_path)}.wav"
+        cache_path = os.path.join(self.cache_dir, cache_key)
+        
+        if use_cache and os.path.exists(cache_path):
+            return cache_path
+            
         print(f"[OmniVoice] Generating TTS for: '{text}'")
         try:
-            audio = self.model.generate(
-                text=text,
-                ref_audio=reference_audio_path
-            )
+            torch.cuda.empty_cache()
+            with torch.no_grad():
+                audio = self.model.generate(
+                    text=text,
+                    ref_audio=reference_audio_path
+                )
             
             sf.write(cache_path, audio[0], 24000)
+            torch.cuda.empty_cache()
             return cache_path
         except Exception as e:
             print(f"[OmniVoice] Error generating TTS: {e}")

@@ -99,7 +99,12 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
         # Check if selected VC model is loaded for bulk generation
         wrapper = vc_wrappers.get(vc_model)
         if wrapper is not None:
-            status += f"🎙️ {vc_model} active. Bulk-generating all sentences in your voice...\n"
+            status += f"🎙️ {vc_model} active. Registration complete! You can now use Custom TTS in the Practice tab.\n"
+            
+            if vc_model == "OmniVoice":
+                return status, audio_path
+                
+            status += " Bulk-generating all sentences in your voice...\n"
             print("[App] Starting bulk voice conversion for enrolled voice...")
 
             # List of all sentences to convert
@@ -557,7 +562,7 @@ def build_ui():
         )
 
         def toggle_custom_tts(model_name):
-            return gr.update(visible=(model_name == "OmniVoice"))
+            return gr.update(visible=(model_name == "OmniVoice")), gr.update(visible=(model_name != "OmniVoice"))
 
         vc_model_select.change(
             fn=lambda m: m,
@@ -566,7 +571,7 @@ def build_ui():
         ).then(
             fn=toggle_custom_tts,
             inputs=[vc_model_select],
-            outputs=[custom_tts_group],
+            outputs=[custom_tts_group, standard_practice_group],
         ).then(
             fn=update_practice_sentences,
             inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state, cfg_rate_state],
