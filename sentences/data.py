@@ -114,6 +114,11 @@ VOICE_CONFIG = {
 }
 
 
+# Base directory for pre-generated reference audio
+import os
+REFERENCE_AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reference_audio")
+
+
 def get_sentences(language_code, difficulty=None):
     """Get sentences for a given language."""
     lang_data = SENTENCES.get(language_code, {})
@@ -129,3 +134,21 @@ def get_sentences(language_code, difficulty=None):
 def get_voice_name(gender, language_code):
     """Get the Google TTS voice name for gender and language."""
     return VOICE_CONFIG.get(gender, {}).get(language_code)
+
+
+def get_reference_audio_path(language_code, gender, sentence_index):
+    """Get the path to a pre-generated reference audio file.
+
+    Args:
+        language_code: 'en-US' or 'es-ES'
+        gender: 'male' or 'female'
+        sentence_index: 0-based index into the sentence list
+
+    Returns:
+        str: Absolute path to the WAV file, or None if not found.
+    """
+    filename = f"{sentence_index + 1:02d}.wav"
+    path = os.path.join(REFERENCE_AUDIO_DIR, language_code, gender, filename)
+    if os.path.exists(path):
+        return path
+    return None

@@ -4,9 +4,6 @@ __pycache__/
 .env
 seed-vc/
 checkpoints/
-*.wav
-*.mp3
-cached_tts/
 cached_vc/
 .venv/
 venv/
@@ -15,3 +12,8 @@ dist/
 build/
 .DS_Store
 flagged/
+
+# Ignore all wav/mp3 EXCEPT the pre-generated reference audio
+*.wav
+*.mp3
+!reference_audio/**/*.wav

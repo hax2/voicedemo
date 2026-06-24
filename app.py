@@ -1,28 +1,27 @@
 """Accent Trainer — Seed-VC v2 Gradio Demo
 
 A demo application for accent training in language learning.
-Users record their voice, and the system generates ideal pronunciation
-audio using their own voice timbre via Seed-VC v2 voice conversion.
+Users record their voice, and the system uses Seed-VC v2 to convert
+pre-generated reference audio (correct pronunciation) into the user's
+voice timbre. Users then practice and compare via spectrograms.
+
+Reference audio is pre-generated once via generate_references.py and
+shipped as static assets in reference_audio/.
 
 Usage:
-    python app.py [--api-key YOUR_KEY] [--seed-vc-path ./seed-vc] [--compile]
+    python app.py [--seed-vc-path ./seed-vc] [--compile] [--no-vc]
 """
 
 import argparse
 import os
-import tempfile
 import gradio as gr
-import numpy as np
-import soundfile as sf
 
-from sentences.data import SENTENCES, VOICE_CONFIG, get_sentences, get_voice_name
-from tts_generator import generate_reference_audio
+from sentences.data import SENTENCES, get_sentences, get_reference_audio_path
 from audio_analysis import create_spectrogram, create_waveform, create_pitch_contour, create_comparison
 
 # ──────────────────────────────────────────────
 # Globals
 # ──────────────────────────────────────────────
-API_KEY = None
 vc_wrapper = None
 
 
@@ -37,7 +36,7 @@ def init_seed_vc(seed_vc_path=None, compile_model=False):
         print("[App] Seed-VC v2 loaded successfully")
     except Exception as e:
         print(f"[App] WARNING: Could not load Seed-VC v2: {e}")
-        print("[App] Voice conversion will be unavailable. TTS-only mode active.")
+        print("[App] Voice conversion will be unavailable. Reference-audio-only mode active.")
         vc_wrapper = None
 
 
@@ -48,7 +47,7 @@ def enroll_voice(audio_path, gender):
     """Process voice enrollment."""
     if audio_path is None:
         return "❌ Please record or upload a voice sample first.", None
-    
+
     # Validate audio length
     try:
         import librosa
@@ -71,7 +70,7 @@ def enroll_voice(audio_path, gender):
 def get_sentence_choices(language):
     """Get sentence choices for the dropdown."""
     sentences = get_sentences(language)
-    return [f"{s['text']}  [{s['focus']}]" for s in sentences]
+    return [f"{i}|{s['text']}  [{s['focus']}]" for i, s in enumerate(sentences)]
 
 
 def update_sentences(language):
@@ -81,50 +80,48 @@ def update_sentences(language):
 
 
 def generate_ideal(sentence_choice, language, gender, enrolled_audio):
-    """Generate ideal pronunciation using TTS + Seed-VC v2."""
+    """Generate ideal pronunciation by converting pre-generated reference audio
+    through Seed-VC v2 using the user's enrolled voice."""
     if not sentence_choice:
-        return None, "❌ Please select a sentence first."
+        return None, None, "❌ Please select a sentence first."
 
-    # Extract actual text (remove the focus note in brackets)
-    text = sentence_choice.split("  [")[0].strip()
+    # Parse sentence index from choice string ("0|text  [focus]")
+    sentence_index = int(sentence_choice.split("|")[0])
 
-    # Step 1: Generate TTS reference audio
-    try:
-        status = f"🔊 Generating TTS reference for: \"{text[:60]}...\"\n"
-        tts_path = generate_reference_audio(
-            text=text,
-            language_code=language,
-            gender=gender,
-            api_key=API_KEY,
+    # Step 1: Look up the pre-generated reference audio
+    ref_path = get_reference_audio_path(language, gender, sentence_index)
+    if ref_path is None:
+        return None, None, (
+            f"❌ Reference audio not found for sentence {sentence_index + 1}.\n"
+            f"Run `python generate_references.py` first to create the audio files."
         )
-        status += "✅ TTS reference generated\n"
-    except Exception as e:
-        return None, f"❌ TTS generation failed: {str(e)}"
+
+    status = f"🔊 Loaded reference audio: sentence {sentence_index + 1}\n"
 
     # Step 2: Voice conversion with Seed-VC v2
     if vc_wrapper is not None and enrolled_audio is not None:
         try:
             status += "🎙️ Converting to your voice with Seed-VC v2...\n"
-            # source = TTS audio (correct pronunciation)
-            # reference = user's voice (timbre to clone)
+            # source = pre-generated TTS audio (correct pronunciation)
+            # reference = user's enrolled voice (timbre to clone)
             converted_path = vc_wrapper.convert_voice(
-                source_audio_path=tts_path,
+                source_audio_path=ref_path,
                 reference_audio_path=enrolled_audio,
                 diffusion_steps=25,
                 length_adjust=1.0,
                 inference_cfg_rate=0.7,
             )
             status += "✅ Voice conversion complete! Listen to your ideal pronunciation below."
-            return converted_path, status
+            return converted_path, ref_path, status
         except Exception as e:
-            status += f"⚠️ Voice conversion failed ({str(e)}). Returning TTS audio instead.\n"
-            return tts_path, status
+            status += f"⚠️ Voice conversion failed ({str(e)}). Playing raw reference audio instead.\n"
+            return ref_path, ref_path, status
     else:
         if enrolled_audio is None:
-            status += "⚠️ No voice enrolled — returning raw TTS audio. Enroll your voice for personalized output.\n"
+            status += "⚠️ No voice enrolled — playing raw reference audio. Enroll your voice for a personalized version.\n"
         else:
-            status += "⚠️ Seed-VC not loaded — returning raw TTS audio.\n"
-        return tts_path, status
+            status += "⚠️ Seed-VC not loaded — playing raw reference audio.\n"
+        return ref_path, ref_path, status
 
 
 def run_comparison(ideal_audio, attempt_audio):
@@ -136,17 +133,17 @@ def run_comparison(ideal_audio, attempt_audio):
         )
 
     fig = create_comparison(ideal_audio, attempt_audio)
-    
+
     notes = []
     if ideal_audio is None:
         notes.append("⚠️ No ideal audio — generate it first")
     if attempt_audio is None:
         notes.append("⚠️ No attempt recorded — record yourself speaking the sentence")
-    
+
     if not notes:
         notes.append("✅ Comparison generated! Look at the spectrograms to compare your pronunciation patterns.")
         notes.append("💡 **Tip:** Similar spectrogram shapes = similar pronunciation. Pay attention to pitch contours and frequency patterns.")
-    
+
     return fig, "\n".join(notes)
 
 
@@ -176,9 +173,6 @@ def build_ui():
         color: #888;
         font-size: 1.1em;
         margin-top: 0;
-    }
-    .tab-content {
-        padding: 20px 10px;
     }
     """
 
@@ -257,8 +251,9 @@ def build_ui():
             with gr.Tab("📝 Practice", id="practice"):
                 gr.Markdown("""
                 ### Step 2: Practice Pronunciation
-                Select a target language and sentence, then generate the ideal pronunciation in your voice.  
-                Record yourself attempting the sentence and compare!
+                Select a target language and sentence. The system will convert the reference 
+                pronunciation into your voice using Seed-VC v2, so you can hear how *you* should sound.
+                Then record yourself and compare!
                 """)
 
                 with gr.Row():
@@ -287,7 +282,7 @@ def build_ui():
                 )
 
                 generate_btn = gr.Button(
-                    "🔊 Generate Ideal Pronunciation",
+                    "🔊 Generate Ideal Pronunciation (in Your Voice)",
                     variant="primary",
                     size="lg",
                 )
@@ -305,6 +300,12 @@ def build_ui():
                             type="filepath",
                             interactive=False,
                         )
+                        gr.Markdown("#### 📖 Original Reference")
+                        reference_audio_player = gr.Audio(
+                            label="Original TTS reference (native speaker)",
+                            type="filepath",
+                            interactive=False,
+                        )
                     with gr.Column():
                         gr.Markdown("#### 🎤 Your Attempt")
                         attempt_audio = gr.Audio(
@@ -316,7 +317,7 @@ def build_ui():
                 generate_btn.click(
                     fn=generate_ideal,
                     inputs=[sentence_select, language_select, enrolled_gender_state, enrolled_audio_state],
-                    outputs=[ideal_audio, generation_status],
+                    outputs=[ideal_audio, reference_audio_player, generation_status],
                 ).then(
                     fn=lambda x: x,
                     inputs=[ideal_audio],
@@ -349,7 +350,7 @@ def build_ui():
             with gr.Tab("📊 Analysis", id="analysis"):
                 gr.Markdown("""
                 ### Detailed Audio Analysis
-                Upload or use audio from the Practice tab for detailed spectrogram analysis.
+                Upload or record audio for detailed spectrogram analysis.
                 """)
 
                 with gr.Row():
@@ -388,17 +389,15 @@ def build_ui():
                 gr.Markdown("""
                 ### How It Works
                 
-                This accent training demo uses a three-stage pipeline:
-                
                 1. **🗣️ Voice Enrollment** — You record a short sample of your natural speech.
-                   This captures your unique voice characteristics (timbre, tone, resonance).
                 
-                2. **🔊 TTS Reference Generation** — Google Cloud TTS (Chirp 3 HD voices)
-                   generates a perfect pronunciation of the target sentence in the chosen language.
+                2. **🔊 Pre-generated References** — 10 sentences per language have been 
+                   pre-recorded using Google Cloud TTS (Chirp 3 HD voices). These are static 
+                   assets — no API calls happen at runtime.
                 
-                3. **🎯 Voice Conversion (Seed-VC v2)** — The TTS audio is converted to sound like
-                   *your* voice using zero-shot voice conversion. The result preserves the correct
-                   pronunciation and accent from the TTS, but in your voice timbre.
+                3. **🎯 Voice Conversion (Seed-VC v2)** — When you select a sentence, the 
+                   pre-generated reference audio is converted to sound like *your* voice using 
+                   zero-shot voice conversion. Correct pronunciation + your timbre.
                 
                 4. **📊 Comparison** — Record yourself attempting the sentence, then compare
                    spectrograms, waveforms, and pitch contours side by side.
@@ -410,7 +409,7 @@ def build_ui():
                 | Component | Technology |
                 |-----------|-----------|
                 | Voice Conversion | [Seed-VC v2](https://github.com/Plachtaa/seed-vc) — zero-shot diffusion-based VC |
-                | Text-to-Speech | Google Cloud TTS — Chirp 3 HD (Algenib / Achernar) |
+                | Reference Audio | Google Cloud TTS — Chirp 3 HD (Algenib / Achernar) |
                 | Visualization | Librosa + Matplotlib — mel spectrograms, pitch tracking |
                 | Interface | Gradio Blocks — with `share=True` for remote access |
                 
@@ -418,9 +417,10 @@ def build_ui():
                 
                 ### Languages
                 
-                Currently supported in this demo:
-                - **English** (for Spanish speakers) — focuses on TH, SH, V/B, schwa sounds
-                - **Spanish** (for English speakers) — focuses on rolled R, vowel purity, J sound
+                - **English** (for Spanish speakers) — TH, SH, V/B, schwa, consonant clusters
+                - **Spanish** (for English speakers) — rolled R, vowel purity, J sound, -ción endings
+                
+                10 sentences per language × 2 genders = 40 pre-generated reference audio files.
                 """)
 
         # ── Footer ──
@@ -438,30 +438,21 @@ def build_ui():
 # ──────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description="Accent Trainer Demo")
-    parser.add_argument("--api-key", type=str, default=None,
-                        help="Google Cloud TTS API key")
     parser.add_argument("--seed-vc-path", type=str, default=None,
                         help="Path to cloned seed-vc repo")
     parser.add_argument("--compile", action="store_true",
                         help="Use torch.compile for faster inference")
     parser.add_argument("--no-vc", action="store_true",
-                        help="Skip loading Seed-VC (TTS-only mode for testing)")
+                        help="Skip loading Seed-VC (reference-audio-only mode for testing)")
     parser.add_argument("--port", type=int, default=7860,
                         help="Port for Gradio server")
     args = parser.parse_args()
-
-    # Set API key
-    global API_KEY
-    API_KEY = args.api_key or os.environ.get("GOOGLE_TTS_API_KEY", "AIzaSyD1DrcOjKZ_eEF9oBe1ZyFHVhZKIUKuWc4")
-
-    if not API_KEY:
-        print("[App] WARNING: No Google TTS API key provided. Set --api-key or GOOGLE_TTS_API_KEY env var.")
 
     # Load Seed-VC v2
     if not args.no_vc:
         init_seed_vc(seed_vc_path=args.seed_vc_path, compile_model=args.compile)
     else:
-        print("[App] Running in TTS-only mode (--no-vc flag set)")
+        print("[App] Running in reference-audio-only mode (--no-vc flag set)")
 
     # Build and launch Gradio app
     demo = build_ui()
