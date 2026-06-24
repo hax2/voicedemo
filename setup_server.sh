@@ -34,8 +34,8 @@ echo "[4/6] Installing EZ-VC dependencies..."
 cd EZ-VC
 git config --global --add safe.directory "$PWD"
 export PATH="$HOME/.local/bin:$PATH"
-apt-get update && apt-get install -y cmake pkg-config
-pip install x_transformers==1.31.14 torch-einops-utils cmake sentencepiece
+apt-get update && apt-get install -y pkg-config
+pip install x_transformers==1.31.14 torch-einops-utils "cmake<3.27.0" sentencepiece
 pip install -e .
 pip install 'espnet @ git+https://github.com/wanchichen/espnet.git@ssl'
 cd ..
