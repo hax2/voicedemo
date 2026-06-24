@@ -32,7 +32,7 @@ fi
 # 4. Install EZ-VC dependencies
 echo "[4/6] Installing EZ-VC dependencies..."
 cd EZ-VC
-git config --global --add safe.directory "$PWD"
+git config --global --add safe.directory '*'
 export PATH="$HOME/.local/bin:$(python -c 'import sys; import os; print(os.path.join(sys.prefix, "bin"))'):$PATH"
 apt-get update && apt-get install -y pkg-config
 pip install x_transformers==1.31.14 torch-einops-utils "cmake<3.27.0"
