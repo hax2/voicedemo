@@ -318,7 +318,7 @@ def build_ui():
                 """)
 
                 with gr.Row():
-                    language_select = gr.Dropdown(
+                    language_select = gr.Radio(
                         choices=[
                             ("English (for Spanish speakers)", "en-US"),
                             ("Spanish (for English speakers)", "es-ES"),
