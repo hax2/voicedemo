@@ -10,6 +10,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 class OmniVoiceWrapper:
     def __init__(self):
         self.model = None
+        self.cache_dir = CACHE_DIR
         self._is_loaded = False
 
     def load(self):
@@ -26,12 +27,19 @@ class OmniVoiceWrapper:
         
         # If the user cloned the model locally to bypass network hangs, use the local folder
         local_model_path = "./OmniVoice_Model"
+        if torch.cuda.is_available():
+            device_map = "cuda:0"
+            dtype = torch.float16
+        else:
+            device_map = "cpu"
+            dtype = torch.float32
+
         if os.path.exists(local_model_path):
             print(f"[OmniVoice] Found local model at {local_model_path}, loading from disk...")
             self.model = OmniVoice.from_pretrained(
                 local_model_path, 
-                device_map="cuda:0", 
-                dtype=torch.float16
+                device_map=device_map, 
+                dtype=dtype
             )
         else:
             from huggingface_hub import snapshot_download
@@ -39,11 +47,21 @@ class OmniVoiceWrapper:
             snapshot_download(repo_id="k2-fsa/OmniVoice", max_workers=1)
             self.model = OmniVoice.from_pretrained(
                 "k2-fsa/OmniVoice", 
-                device_map="cuda:0", 
-                dtype=torch.float16
+                device_map=device_map, 
+                dtype=dtype
             )
         self._is_loaded = True
         print("[OmniVoice] Model loaded successfully.")
+
+    def unload(self):
+        if not self._is_loaded:
+            return
+
+        print("[OmniVoice] Unloading model to free VRAM...")
+        self.model = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self._is_loaded = False
 
     def generate_tts(self, text, reference_audio_path, use_cache=True):
         """
@@ -57,7 +75,8 @@ class OmniVoiceWrapper:
         import torch
 
         # Generate cache key
-        cache_key = f"omnivoice_{hash(text)}_{os.path.basename(reference_audio_path)}.wav"
+        digest = hashlib.md5(f"omnivoice:{text}:{reference_audio_path}".encode()).hexdigest()
+        cache_key = f"omnivoice_{digest}.wav"
         cache_path = os.path.join(self.cache_dir, cache_key)
         
         if use_cache and os.path.exists(cache_path):
@@ -65,7 +84,8 @@ class OmniVoiceWrapper:
             
         print(f"[OmniVoice] Generating TTS for: '{text}'")
         try:
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             with torch.no_grad():
                 audio = self.model.generate(
                     text=text,
@@ -73,7 +93,8 @@ class OmniVoiceWrapper:
                 )
             
             sf.write(cache_path, audio[0], 24000)
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             return cache_path
         except Exception as e:
             print(f"[OmniVoice] Error generating TTS: {e}")
@@ -81,5 +102,4 @@ class OmniVoiceWrapper:
 
 def get_wrapper():
     wrapper = OmniVoiceWrapper()
-    wrapper.load()
     return wrapper

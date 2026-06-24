@@ -63,6 +63,22 @@ def init_ez_vc(ez_vc_path=None):
         vc_wrappers["EZ-VC"] = None
 
 
+def unload_inactive_models(active_model):
+    """Keep only the selected VC backend resident in GPU memory."""
+    for model_name, wrapper in vc_wrappers.items():
+        if model_name == active_model or wrapper is None:
+            continue
+        if hasattr(wrapper, "is_loaded") and not wrapper.is_loaded():
+            continue
+        if hasattr(wrapper, "_is_loaded") and not wrapper._is_loaded:
+            continue
+        if hasattr(wrapper, "unload"):
+            try:
+                wrapper.unload()
+            except Exception as e:
+                print(f"[App] WARNING: Could not unload {model_name}: {e}")
+
+
 # ──────────────────────────────────────────────
 # Core pipeline functions
 # ──────────────────────────────────────────────
@@ -91,6 +107,7 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
             return "❌ Selected VC model is not available. Please check the logs.", None
 
         vc_wrapper = vc_wrappers[vc_model]
+        unload_inactive_models(vc_model)
 
         # Ensure selected model is loaded
         if hasattr(vc_wrapper, "load"):
@@ -670,6 +687,10 @@ def main():
 
     # Build and launch Gradio app
     demo = build_ui()
+    try:
+        demo.queue(default_concurrency_limit=1, max_size=20)
+    except TypeError:
+        demo.queue(concurrency_count=1, max_size=20)
     demo.launch(
         share=True,
         server_name="0.0.0.0",
