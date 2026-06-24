@@ -1,103 +1,109 @@
 # 🎯 Accent Trainer — Seed-VC v2 Demo
 
-AI-powered accent training for language learning. Record your voice, and the system generates ideal pronunciation examples **in your own voice** using zero-shot voice conversion.
+AI-powered accent training for language learning. Record your voice, and the system uses zero-shot voice conversion via **Seed-VC v2** to generate ideal pronunciation examples **in your own voice** from a set of pre-selected sentences.
 
 **Languages:** English ↔ Spanish
 
-## How It Works
+---
+
+## 🚀 How It Works
 
 ```
-Your Voice Sample ─────────────────────────┐
-                                           ▼
-Google TTS (Chirp 3 HD) ──► Seed-VC v2 ──► Your Voice Speaking Correctly
-      (correct accent)     (voice clone)    (ideal pronunciation)
+Your Voice Sample (10-25s) ──────────────────┐
+                                            ▼
+Pre-generated Reference Audio ────────► Seed-VC v2 ──► Your Voice Speaking Correctly
+ (Perfect pronunciation/accent)        (Voice Clone)    (Ideal pronunciation example)
 ```
 
-1. **Enroll** — Record 10-25s of your natural speech
-2. **Generate** — TTS creates a perfect pronunciation → Seed-VC v2 converts it to your voice
-3. **Practice** — Record yourself attempting the sentence
-4. **Compare** — View side-by-side spectrograms, waveforms, and pitch contours
+1. **Enroll** — Record 10-25 seconds of your natural voice speaking in your native language.
+2. **Practice** — Choose a target sentence. The system uses **Seed-VC v2** to convert the pre-recorded ideal pronunciation of that sentence into your own voice.
+3. **Record** — Record yourself attempting to speak the sentence.
+4. **Compare** — View side-by-side pitch contours, waveforms, and mel spectrograms of your attempt versus the ideal clone to identify visual and auditory accent gaps.
 
-## Prerequisites
+---
 
-- Python 3.10
-- NVIDIA GPU (≥8GB VRAM) — tested on A100 40GB
-- FFmpeg installed system-wide
-- Google Cloud TTS API key
+## 🛠️ Prerequisites
 
-## Quick Start (Server)
+- **Python 3.10**
+- **NVIDIA GPU** (recommended A100 40GB or similar for real-time inference)
+- **FFmpeg** installed on the system path
+
+> [!NOTE]
+> All reference audio files (10 sentences × 2 languages × 2 genders = 40 total files) are already pre-generated and included in this repository. **No Google Cloud API keys or external network requests are needed to run this application!**
+
+---
+
+## ⚡ Deployment on A100 Server
+
+Follow these steps to deploy and run the demo on your GPU server:
 
 ```bash
-# 1. Clone this repo
-git clone <your-repo-url>
-cd voice
+# 1. Clone the repository
+git clone https://github.com/hax2/voicedemo.git
+cd voicedemo
 
-# 2. Run the setup script
-chmod +x setup_server.sh
+# 2. Run the automated server setup script
+# (Clones seed-vc, downloads checkpoints, and installs all dependencies)
 bash setup_server.sh
 
-# 3. Launch the app
-python app.py --api-key YOUR_GOOGLE_API_KEY
-
-# The Gradio share link will be printed — access from any device!
+# 3. Start the application
+python app.py
 ```
 
-## Manual Setup
+Once running, Gradio will output a public URL (e.g., `https://xxxx.gradio.live`) that you can open on your laptop's browser to access the demo.
+
+---
+
+## 💻 Local Testing (Without GPU)
+
+If you want to test the UI locally on your laptop without an NVIDIA GPU, you can run the app in **TTS-only / no-VC fallback mode**:
 
 ```bash
-# Clone seed-vc
-git clone https://github.com/Plachtaa/seed-vc.git
-cd seed-vc && pip install -r requirements.txt && cd ..
-
-# Install accent trainer deps
+# Install dependencies
 pip install -r requirements.txt
 
-# Run
-python app.py --api-key YOUR_API_KEY
+# Run in no-VC mode
+python app.py --no-vc
 ```
+*Note: In `--no-vc` mode, the app will play the original pre-generated reference voices instead of converting them to your voice.*
 
-## Command Line Options
+---
+
+## 🎛️ Command Line Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--api-key` | env var | Google Cloud TTS API key |
-| `--seed-vc-path` | `./seed-vc` | Path to seed-vc repo |
-| `--compile` | off | Use torch.compile for faster inference |
-| `--no-vc` | off | TTS-only mode (skip Seed-VC loading) |
-| `--port` | 7860 | Gradio server port |
+| `--seed-vc-path` | `./seed-vc` | Path to the cloned `seed-vc` folder |
+| `--compile` | Off | Enables `torch.compile` for faster inference (requires PyTorch 2.x) |
+| `--no-vc` | Off | Bypasses Seed-VC model loading (runs in fallback mode) |
+| `--port` | `7860` | Gradio server port |
 
-## Testing Without GPU (TTS-only mode)
+---
 
-```bash
-python app.py --api-key YOUR_KEY --no-vc
-```
-
-This skips Seed-VC loading and returns raw TTS audio instead of voice-converted audio. Useful for testing the UI and TTS pipeline.
-
-## TTS Voices
-
-| Gender | Voice Name | Style |
-|--------|-----------|-------|
-| Male | Algenib (Chirp 3 HD) | Gravelly, textured |
-| Female | Achernar (Chirp 3 HD) | Soft, warm |
-
-## Project Structure
+## 📂 Project Structure
 
 ```
-voice/
-├── app.py                 # Main Gradio application
-├── seed_vc_wrapper.py     # Seed-VC v2 inference wrapper
-├── tts_generator.py       # Google Cloud TTS generator
-├── audio_analysis.py      # Spectrogram & visualization
-├── sentences/
-│   ├── __init__.py
-│   └── data.py            # Preset sentences (EN/ES)
-├── requirements.txt
-├── setup_server.sh        # Automated server setup
-├── .env.example
-└── README.md
+voicedemo/
+├── app.py                   # Main Gradio application
+├── seed_vc_wrapper.py       # Seed-VC v2 model inference & caching wrapper
+├── audio_analysis.py        # Visualizations (spectrogram, pitch contour)
+├── generate_references.py   # Script used to pre-generate the reference audio
+├── requirements.txt         # Core dependencies
+├── setup_server.sh          # Automated server setup and model downloader
+├── reference_audio/         # 40 pre-generated reference WAV files (static assets)
+│   ├── en-US/
+│   │   ├── male/
+│   │   └── female/
+│   └── es-ES/
+│       ├── male/
+│       └── female/
+└── sentences/
+    └── data.py              # Sentence data & path lookup helper
 ```
 
-## License
+---
 
-Demo project for educational purposes. Seed-VC is licensed under its own terms — see [Plachtaa/seed-vc](https://github.com/Plachtaa/seed-vc).
+## 📜 Credits & License
+
+- **Seed-VC v2** by Plachtaa. See [Plachtaa/seed-vc](https://github.com/Plachtaa/seed-vc) for model details, code, and license.
+- Audio references were generated using **Google Cloud Text-to-Speech** (Chirp 3 HD: `Algenib` for male, `Achernar` for female) and **Edge TTS** fallback.
