@@ -16,8 +16,10 @@ class OmniVoiceWrapper:
         if self._is_loaded:
             return
         
-        # Use HuggingFace mirror to prevent hanging downloads
-        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+        # Enable hf_transfer for fast Rust-based reliable downloads
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+        if "HF_ENDPOINT" in os.environ:
+            del os.environ["HF_ENDPOINT"]
         
         print("[OmniVoice] Loading model (this might take a while)...")
         from huggingface_hub import snapshot_download
