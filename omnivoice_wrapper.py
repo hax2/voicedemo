@@ -20,6 +20,10 @@ class OmniVoiceWrapper:
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
         
         print("[OmniVoice] Loading model (this might take a while)...")
+        from huggingface_hub import snapshot_download
+        print("[OmniVoice] Pre-downloading model files sequentially to avoid hang...")
+        snapshot_download(repo_id="k2-fsa/OmniVoice", max_workers=1)
+        
         from omnivoice import OmniVoice
         self.model = OmniVoice.from_pretrained(
             "k2-fsa/OmniVoice", 
