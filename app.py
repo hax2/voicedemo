@@ -55,7 +55,7 @@ def init_ez_vc(ez_vc_path=None):
 # ──────────────────────────────────────────────
 # Core pipeline functions
 # ──────────────────────────────────────────────
-def enroll_voice(audio_path, gender, vc_model, progress=gr.Progress()):
+def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress()):
     """Process voice enrollment and bulk-generate all target sentences."""
     if audio_path is None:
         return "❌ Please record or upload a voice sample first.", None
@@ -104,7 +104,7 @@ def enroll_voice(audio_path, gender, vc_model, progress=gr.Progress()):
                             reference_audio_path=audio_path,
                             diffusion_steps=25,
                             length_adjust=1.0,
-                            inference_cfg_rate=0.7,
+                            inference_cfg_rate=cfg_rate,
                         )
                     except Exception as e:
                         print(f"[App] Error bulk-converting sentence {i} in {lang}: {e}")
@@ -120,7 +120,7 @@ def enroll_voice(audio_path, gender, vc_model, progress=gr.Progress()):
         return f"❌ Error processing voice enrollment: {str(e)}", None
 
 
-def update_practice_sentences(language, gender, enrolled_audio, vc_model):
+def update_practice_sentences(language, gender, enrolled_audio, vc_model, cfg_rate):
     """Update all 10 sentence cards in the Practice tab."""
     sentences = get_sentences(language)
     outputs = []
@@ -155,26 +155,21 @@ def update_practice_sentences(language, gender, enrolled_audio, vc_model):
             
             if wrapper is not None and enrolled_audio is not None and ref_path is not None:
                 # Re-generate the cache key to look up the file
-                cache_key = hashlib.md5(
-                    f"{ref_path}:{enrolled_audio}:25:1.0:0.7".encode()
-                ).hexdigest()
-                cached_file = os.path.join(CACHE_DIR, f"{cache_key}.wav")
-                
-                if os.path.exists(cached_file):
-                    ideal_path = cached_file
-                else:
-                    # Fallback to run conversion on the fly if not in cache (e.g. if bulk conversion failed or skipped)
-                    try:
-                        ideal_path = wrapper.convert_voice(
-                            source_audio_path=ref_path,
-                            reference_audio_path=enrolled_audio,
-                            diffusion_steps=25,
-                            length_adjust=1.0,
-                            inference_cfg_rate=0.7,
-                        )
-                    except Exception as e:
-                        print(f"[App] Error generating ideal voice for sentence {i}: {e}")
-                        ideal_path = ref_path
+                # Use the wrapper's own logic to check cache or we just call convert_voice with use_cache=True
+                # The wrapper will handle caching and returning the correct path
+                try:
+                    ideal_path = wrapper.convert_voice(
+                        source_audio_path=ref_path,
+                        reference_audio_path=enrolled_audio,
+                        diffusion_steps=25,
+                        length_adjust=1.0,
+                        inference_cfg_rate=cfg_rate,
+                        use_cache=True
+                    )
+                except Exception as e:
+                    print(f"[App] Error generating ideal voice for sentence {i}: {e}")
+                    ideal_path = ref_path
+
             else:
                 ideal_path = ref_path
         
@@ -264,6 +259,7 @@ def build_ui():
         enrolled_gender_state = gr.State("male")
         ideal_audio_state = gr.State(None)
         vc_model_state = gr.State("Seed-VC v2")
+        cfg_rate_state = gr.State(2.0)
 
         with gr.Tabs():
             # ═══════════════════════════════════════════
@@ -299,6 +295,11 @@ def build_ui():
                             value="Seed-VC v2",
                             label="⚙️ VC Model",
                             info="Choose the voice conversion backend",
+                        )
+                        cfg_rate_slider = gr.Slider(
+                            minimum=0.5, maximum=3.0, value=2.0, step=0.1,
+                            label="🎚️ CFG Rate",
+                            info="Conditioning strength. Higher = sticks more to your voice."
                         )
 
                 enroll_btn = gr.Button("✅ Enroll Voice", variant="primary", size="lg")
@@ -472,11 +473,11 @@ def build_ui():
         # TAB 1: Voice Enrollment
         enroll_btn.click(
             fn=enroll_voice,
-            inputs=[enrollment_audio, gender_select, vc_model_select],
+            inputs=[enrollment_audio, gender_select, vc_model_select, cfg_rate_slider],
             outputs=[enrollment_status, enrolled_audio_state],
         ).then(
             fn=update_practice_sentences,
-            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state],
+            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state, cfg_rate_state],
             outputs=practice_outputs,
         )
 
@@ -492,7 +493,17 @@ def build_ui():
             outputs=[vc_model_state],
         ).then(
             fn=update_practice_sentences,
-            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state],
+            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state, cfg_rate_state],
+            outputs=practice_outputs,
+        )
+
+        cfg_rate_slider.change(
+            fn=lambda c: c,
+            inputs=[cfg_rate_slider],
+            outputs=[cfg_rate_state],
+        ).then(
+            fn=update_practice_sentences,
+            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state, cfg_rate_state],
             outputs=practice_outputs,
         )
 
@@ -504,6 +515,7 @@ def build_ui():
                 enrolled_gender_state,
                 enrolled_audio_state,
                 vc_model_state,
+                cfg_rate_state,
             ],
             outputs=practice_outputs,
         )
