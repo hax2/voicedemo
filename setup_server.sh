@@ -32,6 +32,7 @@ fi
 # 4. Install EZ-VC dependencies
 echo "[4/6] Installing EZ-VC dependencies..."
 cd EZ-VC
+git config --global --add safe.directory "$PWD"
 pip install -e .
 pip install 'espnet @ git+https://github.com/wanchichen/espnet.git@ssl'
 cd ..
