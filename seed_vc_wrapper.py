@@ -144,32 +144,18 @@ class SeedVCWrapper:
         if use_cache and os.path.exists(output_path):
             return output_path
 
-        # Load source audio (TTS reference)
-        source_audio, source_sr = torchaudio.load(source_audio_path)
-        if source_audio.shape[0] > 1:
-            source_audio = source_audio.mean(dim=0, keepdim=True)
-
-        # Load reference audio (user's voice)
-        ref_audio, ref_sr = torchaudio.load(reference_audio_path)
-        if ref_audio.shape[0] > 1:
-            ref_audio = ref_audio.mean(dim=0, keepdim=True)
-
-        # Clip reference to 25 seconds max
-        max_ref_len = 25 * ref_sr
-        if ref_audio.shape[1] > max_ref_len:
-            ref_audio = ref_audio[:, :max_ref_len]
-
-        # Run voice conversion
+        # Run voice conversion using the wrapper's convert_voice method
         with torch.no_grad():
-            converted_audio, output_sr = self.vc_wrapper(
-                source_audio,
-                source_sr,
-                ref_audio,
-                ref_sr,
+            converted_audio = self.vc_wrapper.convert_voice(
+                source_audio_path=source_audio_path,
+                target_audio_path=reference_audio_path,
                 diffusion_steps=diffusion_steps,
                 length_adjust=length_adjust,
                 inference_cfg_rate=inference_cfg_rate,
+                device=self.device,
+                dtype=self.dtype,
             )
+            output_sr = self.vc_wrapper.sr
 
         # Handle output format
         if isinstance(converted_audio, torch.Tensor):
