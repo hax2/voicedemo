@@ -111,6 +111,16 @@ class SeedVCWrapper:
         self._loaded = True
         print("[SeedVC] Model loaded successfully")
 
+    def unload(self):
+        """Unload the model to free VRAM."""
+        if not self._loaded:
+            return
+        print("[SeedVC] Unloading model to free VRAM...")
+        self.vc_wrapper = None
+        import torch
+        torch.cuda.empty_cache()
+        self._loaded = False
+
     def convert_voice(
         self,
         source_audio_path,

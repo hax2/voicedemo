@@ -114,6 +114,19 @@ class EZVCWrapper:
         self._loaded = True
         print("[EZ-VC] Model loaded successfully")
 
+    def unload(self):
+        """Unload the model to free VRAM."""
+        if not self._loaded:
+            return
+        print("[EZ-VC] Unloading model to free VRAM...")
+        self.model = None
+        self.vocoder = None
+        self.xeus_model = None
+        self.apply_kmeans = None
+        import torch
+        torch.cuda.empty_cache()
+        self._loaded = False
+
     def convert_voice(
         self,
         source_audio_path,

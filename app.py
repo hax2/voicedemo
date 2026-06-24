@@ -32,9 +32,8 @@ def init_seed_vc(seed_vc_path=None, compile_model=False):
     try:
         from seed_vc_wrapper import get_wrapper
         wrapper = get_wrapper(seed_vc_path=seed_vc_path, compile_model=compile_model)
-        wrapper.load()
         vc_wrappers["Seed-VC v2"] = wrapper
-        print("[App] Seed-VC v2 loaded successfully")
+        print("[App] Seed-VC v2 wrapper initialized")
     except Exception as e:
         print(f"[App] WARNING: Could not load Seed-VC v2: {e}")
         vc_wrappers["Seed-VC v2"] = None
@@ -44,9 +43,8 @@ def init_ez_vc(ez_vc_path=None):
     try:
         from ez_vc_wrapper import get_wrapper
         wrapper = get_wrapper(ez_vc_path=ez_vc_path)
-        wrapper.load()
         vc_wrappers["EZ-VC"] = wrapper
-        print("[App] EZ-VC loaded successfully")
+        print("[App] EZ-VC wrapper initialized")
     except Exception as e:
         print(f"[App] WARNING: Could not load EZ-VC: {e}")
         vc_wrappers["EZ-VC"] = None
@@ -75,6 +73,21 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
             f"📊 Duration: {duration:.1f}s | Sample rate: {sr}Hz\n"
             f"🗣️ Gender: {gender.title()}\n\n"
         )
+
+        if vc_model not in vc_wrappers or vc_wrappers[vc_model] is None:
+            return "❌ Selected VC model is not available. Please check the logs.", None
+
+        # Unload other models to free VRAM
+        for name, wrapper in vc_wrappers.items():
+            if name != vc_model and wrapper is not None:
+                if hasattr(wrapper, "unload"):
+                    wrapper.unload()
+
+        vc_wrapper = vc_wrappers[vc_model]
+
+        # Ensure selected model is loaded
+        if hasattr(vc_wrapper, "load"):
+            vc_wrapper.load()
 
         # Check if selected VC model is loaded for bulk generation
         wrapper = vc_wrappers.get(vc_model)
@@ -122,6 +135,12 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
 
 def update_practice_sentences(language, gender, enrolled_audio, vc_model, cfg_rate):
     """Update all 10 sentence cards in the Practice tab."""
+    # Unload other models to free VRAM before bulk conversion
+    for name, wrapper in vc_wrappers.items():
+        if name != vc_model and wrapper is not None:
+            if hasattr(wrapper, "unload"):
+                wrapper.unload()
+
     sentences = get_sentences(language)
     outputs = []
     
