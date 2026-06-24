@@ -171,17 +171,19 @@ class EZVCWrapper:
         from f5_tts.infer.utils_xeus import extract_units
         import soundfile as sf
         
-        # 1. Extract units from source audio (which is the speech to convert)
+        # 1. Extract units from both source and reference audios
         try:
-            print(f"[EZ-VC] Extracting units from {source_audio_path}...")
             # Move XEUS to GPU
             self.xeus_model.to(self.device)
             self.apply_kmeans.device = self.device
             self.apply_kmeans.C = self.apply_kmeans.C.to(self.device)
             self.apply_kmeans.Cnorm = self.apply_kmeans.Cnorm.to(self.device)
 
-            # Note: utils_xeus.py defines extract_units(audio_path, xeus_model, apply_kmeans, device)
-            unit_str = extract_units(source_audio_path, self.xeus_model, self.apply_kmeans, self.device)
+            print(f"[EZ-VC] Extracting units from source {source_audio_path}...")
+            source_units = extract_units(source_audio_path, self.xeus_model, self.apply_kmeans, self.device)
+            
+            print(f"[EZ-VC] Extracting units from reference {reference_audio_path}...")
+            ref_units = extract_units(reference_audio_path, self.xeus_model, self.apply_kmeans, self.device)
 
             # Offload XEUS back to CPU and free VRAM
             self.xeus_model.to("cpu")
@@ -205,8 +207,8 @@ class EZVCWrapper:
             # We map our wrapper arguments to what f5_tts utils_infer typically expects.
             audio_out, sr_out, _ = infer_process(
                 ref_audio=reference_audio_path,
-                ref_text="",  # EZ-VC is textless
-                gen_text=unit_str, # The extracted units act as the "text" for the decoder
+                ref_text=ref_units,  # EZ-VC uses the extracted units of the prompt audio here
+                gen_text=source_units, # The extracted units of the target speech act as the "text" for the decoder
                 model_obj=self.model,
                 vocoder=self.vocoder,
                 mel_spec_type="vocos", # Usually vocos or bigvgan depending on config
