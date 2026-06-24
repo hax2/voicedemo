@@ -124,6 +124,7 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
                 status += f"⚡ Bulk-generation complete! All {total} sentences are pre-converted and will play instantly in the Practice tab."
             else:
                 status += "⚠️ No reference audio files found to convert."
+        else:
             status += f"⚠️ {vc_model} not loaded. Voice conversion is offline (playing raw reference audio)."
 
         return status, audio_path
