@@ -18,13 +18,31 @@ cd seed-vc
 pip install -r requirements.txt
 cd ..
 
-# 3. Install accent trainer dependencies
-echo "[3/4] Installing accent trainer dependencies..."
+# 3. Clone EZ-VC if not already present
+if [ ! -d "EZ-VC" ]; then
+    echo "[3/6] Cloning EZ-VC repository..."
+    git clone https://github.com/EZ-VC/EZ-VC.git
+    cd EZ-VC
+    git submodule update --init --recursive
+    cd ..
+else
+    echo "[3/6] EZ-VC already cloned, skipping."
+fi
+
+# 4. Install EZ-VC dependencies
+echo "[4/6] Installing EZ-VC dependencies..."
+cd EZ-VC
+pip install -e .
+pip install 'espnet @ git+https://github.com/wanchichen/espnet.git@ssl'
+cd ..
+
+# 5. Install accent trainer dependencies
+echo "[5/6] Installing accent trainer dependencies..."
 pip install -r requirements.txt
 pip install --force-reinstall "protobuf==3.20.3"
 
-# 4. Create cache directories
-echo "[4/4] Creating cache directories..."
+# 6. Create cache directories
+echo "[6/6] Creating cache directories..."
 mkdir -p cached_tts
 mkdir -p cached_vc
 mkdir -p checkpoints

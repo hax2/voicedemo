@@ -22,28 +22,40 @@ from audio_analysis import create_spectrogram, create_waveform, create_pitch_con
 # ──────────────────────────────────────────────
 # Globals
 # ──────────────────────────────────────────────
-vc_wrapper = None
-
+vc_wrappers = {
+    "Seed-VC v2": None,
+    "EZ-VC": None
+}
 
 def init_seed_vc(seed_vc_path=None, compile_model=False):
     """Initialize Seed-VC v2 model (called once at startup)."""
-    global vc_wrapper
     try:
         from seed_vc_wrapper import get_wrapper
         wrapper = get_wrapper(seed_vc_path=seed_vc_path, compile_model=compile_model)
         wrapper.load()
-        vc_wrapper = wrapper
+        vc_wrappers["Seed-VC v2"] = wrapper
         print("[App] Seed-VC v2 loaded successfully")
     except Exception as e:
         print(f"[App] WARNING: Could not load Seed-VC v2: {e}")
-        print("[App] Voice conversion will be unavailable. Reference-audio-only mode active.")
-        vc_wrapper = None
+        vc_wrappers["Seed-VC v2"] = None
+
+def init_ez_vc(ez_vc_path=None):
+    """Initialize EZ-VC model (called once at startup)."""
+    try:
+        from ez_vc_wrapper import get_wrapper
+        wrapper = get_wrapper(ez_vc_path=ez_vc_path)
+        wrapper.load()
+        vc_wrappers["EZ-VC"] = wrapper
+        print("[App] EZ-VC loaded successfully")
+    except Exception as e:
+        print(f"[App] WARNING: Could not load EZ-VC: {e}")
+        vc_wrappers["EZ-VC"] = None
 
 
 # ──────────────────────────────────────────────
 # Core pipeline functions
 # ──────────────────────────────────────────────
-def enroll_voice(audio_path, gender, progress=gr.Progress()):
+def enroll_voice(audio_path, gender, vc_model, progress=gr.Progress()):
     """Process voice enrollment and bulk-generate all target sentences."""
     if audio_path is None:
         return "❌ Please record or upload a voice sample first.", None
@@ -64,10 +76,10 @@ def enroll_voice(audio_path, gender, progress=gr.Progress()):
             f"🗣️ Gender: {gender.title()}\n\n"
         )
 
-        # Check if Seed-VC is loaded for bulk generation
-        global vc_wrapper
-        if vc_wrapper is not None:
-            status += "🎙️ Seed-VC v2 active. Bulk-generating all sentences in your voice...\n"
+        # Check if selected VC model is loaded for bulk generation
+        wrapper = vc_wrappers.get(vc_model)
+        if wrapper is not None:
+            status += f"🎙️ {vc_model} active. Bulk-generating all sentences in your voice...\n"
             print("[App] Starting bulk voice conversion for enrolled voice...")
 
             # List of all sentences to convert
@@ -87,7 +99,7 @@ def enroll_voice(audio_path, gender, progress=gr.Progress()):
                     progress(idx / total, desc=desc)
                     try:
                         # This runs conversion and caches the output path
-                        vc_wrapper.convert_voice(
+                        wrapper.convert_voice(
                             source_audio_path=ref_path,
                             reference_audio_path=audio_path,
                             diffusion_steps=25,
@@ -101,20 +113,19 @@ def enroll_voice(audio_path, gender, progress=gr.Progress()):
                 status += f"⚡ Bulk-generation complete! All {total} sentences are pre-converted and will play instantly in the Practice tab."
             else:
                 status += "⚠️ No reference audio files found to convert."
-        else:
-            status += "⚠️ Seed-VC not loaded. Voice conversion is offline (playing raw reference audio)."
+            status += f"⚠️ {vc_model} not loaded. Voice conversion is offline (playing raw reference audio)."
 
         return status, audio_path
     except Exception as e:
         return f"❌ Error processing voice enrollment: {str(e)}", None
 
 
-def update_practice_sentences(language, gender, enrolled_audio):
+def update_practice_sentences(language, gender, enrolled_audio, vc_model):
     """Update all 10 sentence cards in the Practice tab."""
     sentences = get_sentences(language)
     outputs = []
     
-    global vc_wrapper
+    wrapper = vc_wrappers.get(vc_model)
     import hashlib
     import os
     from seed_vc_wrapper import CACHE_DIR
@@ -142,7 +153,7 @@ def update_practice_sentences(language, gender, enrolled_audio):
             """
             ref_path = get_reference_audio_path(language, gender, i)
             
-            if vc_wrapper is not None and enrolled_audio is not None and ref_path is not None:
+            if wrapper is not None and enrolled_audio is not None and ref_path is not None:
                 # Re-generate the cache key to look up the file
                 cache_key = hashlib.md5(
                     f"{ref_path}:{enrolled_audio}:25:1.0:0.7".encode()
@@ -154,7 +165,7 @@ def update_practice_sentences(language, gender, enrolled_audio):
                 else:
                     # Fallback to run conversion on the fly if not in cache (e.g. if bulk conversion failed or skipped)
                     try:
-                        ideal_path = vc_wrapper.convert_voice(
+                        ideal_path = wrapper.convert_voice(
                             source_audio_path=ref_path,
                             reference_audio_path=enrolled_audio,
                             diffusion_steps=25,
@@ -252,6 +263,7 @@ def build_ui():
         enrolled_audio_state = gr.State(None)
         enrolled_gender_state = gr.State("male")
         ideal_audio_state = gr.State(None)
+        vc_model_state = gr.State("Seed-VC v2")
 
         with gr.Tabs():
             # ═══════════════════════════════════════════
@@ -280,7 +292,13 @@ def build_ui():
                             choices=["male", "female"],
                             value="male",
                             label="🗣️ Voice Type",
-                            info="Selects the TTS base voice (Algenib / Achernar)",
+                            info="Selects the TTS base voice",
+                        )
+                        vc_model_select = gr.Radio(
+                            choices=["Seed-VC v2", "EZ-VC"],
+                            value="Seed-VC v2",
+                            label="⚙️ VC Model",
+                            info="Choose the voice conversion backend",
                         )
 
                 enroll_btn = gr.Button("✅ Enroll Voice", variant="primary", size="lg")
@@ -454,11 +472,11 @@ def build_ui():
         # TAB 1: Voice Enrollment
         enroll_btn.click(
             fn=enroll_voice,
-            inputs=[enrollment_audio, gender_select],
+            inputs=[enrollment_audio, gender_select, vc_model_select],
             outputs=[enrollment_status, enrolled_audio_state],
         ).then(
             fn=update_practice_sentences,
-            inputs=[language_select, enrolled_gender_state, enrolled_audio_state],
+            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state],
             outputs=practice_outputs,
         )
 
@@ -468,6 +486,16 @@ def build_ui():
             outputs=[enrolled_gender_state],
         )
 
+        vc_model_select.change(
+            fn=lambda m: m,
+            inputs=[vc_model_select],
+            outputs=[vc_model_state],
+        ).then(
+            fn=update_practice_sentences,
+            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state],
+            outputs=practice_outputs,
+        )
+
         # TAB 2: Practice (Sentence events: language changes and comparison clicks)
         language_select.change(
             fn=update_practice_sentences,
@@ -475,6 +503,7 @@ def build_ui():
                 language_select,
                 enrolled_gender_state,
                 enrolled_audio_state,
+                vc_model_state,
             ],
             outputs=practice_outputs,
         )
@@ -500,6 +529,7 @@ def build_ui():
                 language_select,
                 enrolled_gender_state,
                 enrolled_audio_state,
+                vc_model_state,
             ],
             outputs=practice_outputs,
         )
@@ -521,6 +551,8 @@ def main():
     parser = argparse.ArgumentParser(description="Accent Trainer Demo")
     parser.add_argument("--seed-vc-path", type=str, default=None,
                         help="Path to cloned seed-vc repo")
+    parser.add_argument("--ez-vc-path", type=str, default=None,
+                        help="Path to cloned EZ-VC repo")
     parser.add_argument("--compile", action="store_true",
                         help="Use torch.compile for faster inference")
     parser.add_argument("--no-vc", action="store_true",
@@ -529,9 +561,10 @@ def main():
                         help="Port for Gradio server")
     args = parser.parse_args()
 
-    # Load Seed-VC v2
+    # Load VC models
     if not args.no_vc:
         init_seed_vc(seed_vc_path=args.seed_vc_path, compile_model=args.compile)
+        init_ez_vc(ez_vc_path=args.ez_vc_path)
     else:
         print("[App] Running in reference-audio-only mode (--no-vc flag set)")
 
