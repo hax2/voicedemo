@@ -78,6 +78,16 @@ class SeedVCWrapper:
         self.vc_wrapper.to(self.device)
         self.vc_wrapper.eval()
 
+        # Monkey-patch self.vc_wrapper.cfm.inference to remove unsupported sway_sampling/amo_sampling parameters
+        if hasattr(self.vc_wrapper, 'cfm') and hasattr(self.vc_wrapper.cfm, 'inference'):
+            original_inference = self.vc_wrapper.cfm.inference
+            def patched_inference(*args, **kwargs):
+                kwargs.pop('sway_sampling', None)
+                kwargs.pop('amo_sampling', None)
+                return original_inference(*args, **kwargs)
+            self.vc_wrapper.cfm.inference = patched_inference
+            print("[SeedVC] Patched cfm.inference to remove unsupported sway_sampling and amo_sampling kwargs")
+
         # Setup AR caches
         self.vc_wrapper.setup_ar_caches(
             max_batch_size=1,
