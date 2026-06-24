@@ -390,16 +390,6 @@ def build_ui():
                             label="🌍 Target Language",
                         )
 
-                # Custom TTS (Visible only when OmniVoice is active)
-                with gr.Group(visible=False) as custom_tts_group:
-                    gr.Markdown("### Custom Sentence Generation (OmniVoice Only)")
-                    with gr.Row():
-                        with gr.Column(scale=3):
-                            custom_tts_text = gr.Textbox(label="Enter your own sentence to practice", placeholder="Type a sentence here...")
-                        with gr.Column(scale=1):
-                            custom_tts_btn = gr.Button("🗣️ Generate TTS")
-                    custom_tts_audio = gr.Audio(label="Custom Cloned Audio", interactive=False)
-
                     # Dynamically build 10 sentence cards
                     sentence_htmls = []
                     native_players = []
@@ -453,6 +443,16 @@ def build_ui():
                                         comparison_plots.append(comp_plot)
 
                             gr.HTML("<div style='margin-bottom: 25px;'></div>")
+
+                # Custom TTS (Visible only when OmniVoice is active)
+                with gr.Group(visible=False) as custom_tts_group:
+                    gr.Markdown("### Custom Sentence Generation (OmniVoice Only)")
+                    with gr.Row():
+                        with gr.Column(scale=3):
+                            custom_tts_text = gr.Textbox(label="Enter your own sentence to practice", placeholder="Type a sentence here...")
+                        with gr.Column(scale=1):
+                            custom_tts_btn = gr.Button("🗣️ Generate TTS")
+                    custom_tts_audio = gr.Audio(label="Custom Cloned Audio", interactive=False)
 
             # ═══════════════════════════════════════════
             # TAB 3: Visualizations
