@@ -21,6 +21,7 @@ cd ..
 # 3. Install accent trainer dependencies
 echo "[3/4] Installing accent trainer dependencies..."
 pip install -r requirements.txt
+pip install --upgrade "protobuf>=3.20.3"
 
 # 4. Create cache directories
 echo "[4/4] Creating cache directories..."
