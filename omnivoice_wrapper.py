@@ -62,4 +62,6 @@ class OmniVoiceWrapper:
             raise
 
 def get_wrapper():
-    return OmniVoiceWrapper()
+    wrapper = OmniVoiceWrapper()
+    wrapper.load()
+    return wrapper

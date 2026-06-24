@@ -374,18 +374,20 @@ def build_ui():
                 Listen to the native reference, compare it to your cloned "ideal" voice, record your attempt, and run the comparison analysis!
                 """)
 
-                with gr.Row():
-                    language_select = gr.Radio(
-                        choices=[
-                            ("English (for Spanish speakers)", "en-US"),
-                            ("Spanish (for English speakers)", "es-ES"),
-                        ],
-                        value="en-US",
-                        label="🌍 Target Language",
-                    )
-                
-                # Custom TTS (Visible only when OmniVoice is active, handled via update function if needed, or just always available for OmniVoice)
-                with gr.Group(visible=True) as custom_tts_group:
+                # Standard Practice Group (Visible when NOT OmniVoice)
+                with gr.Group(visible=True) as standard_practice_group:
+                    with gr.Row():
+                        language_select = gr.Radio(
+                            choices=[
+                                ("English (for Spanish speakers)", "en-US"),
+                                ("Spanish (for English speakers)", "es-ES"),
+                            ],
+                            value="en-US",
+                            label="🌍 Target Language",
+                        )
+
+                # Custom TTS (Visible only when OmniVoice is active)
+                with gr.Group(visible=False) as custom_tts_group:
                     gr.Markdown("### Custom Sentence Generation (OmniVoice Only)")
                     with gr.Row():
                         with gr.Column(scale=3):
@@ -394,59 +396,59 @@ def build_ui():
                             custom_tts_btn = gr.Button("🗣️ Generate TTS")
                     custom_tts_audio = gr.Audio(label="Custom Cloned Audio", interactive=False)
 
-                # Dynamically build 10 sentence cards
-                sentence_htmls = []
-                native_players = []
-                cloned_players = []
-                attempt_recorders = []
-                compare_btns = []
-                comparison_statuses = []
-                comparison_plots = []
+                    # Dynamically build 10 sentence cards
+                    sentence_htmls = []
+                    native_players = []
+                    cloned_players = []
+                    attempt_recorders = []
+                    compare_btns = []
+                    comparison_statuses = []
+                    comparison_plots = []
 
-                for i in range(10):
-                    with gr.Group():
-                        s_html = gr.HTML(value="")
-                        sentence_htmls.append(s_html)
+                    for i in range(10):
+                        with gr.Group():
+                            s_html = gr.HTML(value="")
+                            sentence_htmls.append(s_html)
 
-                        with gr.Row():
-                            with gr.Column(scale=1):
-                                ref_player = gr.Audio(
-                                    label="📖 Native Reference",
-                                    type="filepath",
-                                    interactive=False,
-                                )
-                                native_players.append(ref_player)
-                            with gr.Column(scale=1):
-                                clone_player = gr.Audio(
-                                    label="🎯 Cloned Ideal (Your Voice)",
-                                    type="filepath",
-                                    interactive=False,
-                                )
-                                cloned_players.append(clone_player)
-                            with gr.Column(scale=1):
-                                attempt_player = gr.Audio(
-                                    sources=["microphone"],
-                                    type="filepath",
-                                    label="🎤 Your Attempt",
-                                )
-                                attempt_recorders.append(attempt_player)
-
-                        with gr.Accordion("📊 Comparison Analysis", open=False):
                             with gr.Row():
                                 with gr.Column(scale=1):
-                                    comp_btn = gr.Button("📊 Analyze & Compare", variant="secondary", size="sm")
-                                    compare_btns.append(comp_btn)
-                                    comp_status = gr.Textbox(
-                                        label="Comparison Notes",
+                                    ref_player = gr.Audio(
+                                        label="📖 Native Reference",
+                                        type="filepath",
                                         interactive=False,
-                                        lines=3,
                                     )
-                                    comparison_statuses.append(comp_status)
-                                with gr.Column(scale=2):
-                                    comp_plot = gr.Plot(label="Spectrogram / Pitch Comparison")
-                                    comparison_plots.append(comp_plot)
+                                    native_players.append(ref_player)
+                                with gr.Column(scale=1):
+                                    clone_player = gr.Audio(
+                                        label="🎯 Cloned Ideal (Your Voice)",
+                                        type="filepath",
+                                        interactive=False,
+                                    )
+                                    cloned_players.append(clone_player)
+                                with gr.Column(scale=1):
+                                    attempt_player = gr.Audio(
+                                        sources=["microphone"],
+                                        type="filepath",
+                                        label="🎤 Your Attempt",
+                                    )
+                                    attempt_recorders.append(attempt_player)
 
-                        gr.HTML("<div style='margin-bottom: 25px;'></div>")
+                            with gr.Accordion("📊 Comparison Analysis", open=False):
+                                with gr.Row():
+                                    with gr.Column(scale=1):
+                                        comp_btn = gr.Button("📊 Analyze & Compare", variant="secondary", size="sm")
+                                        compare_btns.append(comp_btn)
+                                        comp_status = gr.Textbox(
+                                            label="Comparison Notes",
+                                            interactive=False,
+                                            lines=3,
+                                        )
+                                        comparison_statuses.append(comp_status)
+                                    with gr.Column(scale=2):
+                                        comp_plot = gr.Plot(label="Spectrogram / Pitch Comparison")
+                                        comparison_plots.append(comp_plot)
+
+                            gr.HTML("<div style='margin-bottom: 25px;'></div>")
 
             # ═══════════════════════════════════════════
             # TAB 3: Visualizations
