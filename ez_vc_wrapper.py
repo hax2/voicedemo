@@ -211,7 +211,7 @@ class EZVCWrapper:
                 gen_text=source_units, # The extracted units of the target speech act as the "text" for the decoder
                 model_obj=self.model,
                 vocoder=self.vocoder,
-                mel_spec_type="vocos", # Usually vocos or bigvgan depending on config
+                mel_spec_type="bigvgan", # Match the BigVGAN vocoder we loaded
                 target_rms=0.1,
                 cross_fade_duration=0.15,
                 sway_sampling_coef=-1.0,
