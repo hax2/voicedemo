@@ -48,8 +48,14 @@ pip install cached-path
 pip install --upgrade protobuf
 pip install "numpy<2"
 
-# 6. Create cache directories
-echo "[6/6] Creating cache directories..."
+# 6. Create symlink for EZ-VC xeus configs
+echo "[6/7] Fixing EZ-VC xeus paths..."
+if [ ! -d "xeus" ]; then
+    ln -s EZ-VC/src/f5_tts/infer/xeus xeus
+fi
+
+# 7. Create cache directories
+echo "[7/7] Creating cache directories..."
 mkdir -p cached_tts
 mkdir -p cached_vc
 mkdir -p checkpoints
