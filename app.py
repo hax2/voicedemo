@@ -81,12 +81,6 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
         if vc_model not in vc_wrappers or vc_wrappers[vc_model] is None:
             return "❌ Selected VC model is not available. Please check the logs.", None
 
-        # Unload other models to free VRAM
-        for name, wrapper in vc_wrappers.items():
-            if name != vc_model and wrapper is not None:
-                if hasattr(wrapper, "unload"):
-                    wrapper.unload()
-
         vc_wrapper = vc_wrappers[vc_model]
 
         # Ensure selected model is loaded
@@ -139,12 +133,6 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
 
 def update_practice_sentences(language, gender, enrolled_audio, vc_model, cfg_rate):
     """Update all 10 sentence cards in the Practice tab."""
-    # Unload other models to free VRAM before bulk conversion
-    for name, wrapper in vc_wrappers.items():
-        if name != vc_model and wrapper is not None:
-            if hasattr(wrapper, "unload"):
-                wrapper.unload()
-
     sentences = get_sentences(language)
     outputs = []
     

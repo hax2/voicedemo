@@ -80,14 +80,14 @@ class EZVCWrapper:
 
         print(f"[EZ-VC] Loading models on device: {self.device}")
 
-        # Load XEUS model to CPU initially
+        # Load XEUS model
         print("[EZ-VC] Loading XEUS model...")
-        self.xeus_model = load_xeus_model("cpu").eval()
-        self.apply_kmeans = ApplyKmeans("cpu")
+        self.xeus_model = load_xeus_model(self.device).eval()
+        self.apply_kmeans = ApplyKmeans(self.device)
 
-        # Load vocoder to CPU initially
+        # Load vocoder
         print("[EZ-VC] Loading Vocoder...")
-        self.vocoder = load_vocoder(vocoder_name="bigvgan", device="cpu")
+        self.vocoder = load_vocoder(vocoder_name="bigvgan", device=self.device)
 
         # Load TTS model
         print("[EZ-VC] Loading Main Model...")
@@ -108,7 +108,7 @@ class EZVCWrapper:
             vocab_file=vocab_file,
             ode_method="euler",
             use_ema=True,
-            device="cpu",
+            device=self.device,
         )
 
         self._loaded = True
@@ -173,24 +173,11 @@ class EZVCWrapper:
         
         # 1. Extract units from both source and reference audios
         try:
-            # Move XEUS to GPU
-            self.xeus_model.to(self.device)
-            self.apply_kmeans.device = self.device
-            self.apply_kmeans.C = self.apply_kmeans.C.to(self.device)
-            self.apply_kmeans.Cnorm = self.apply_kmeans.Cnorm.to(self.device)
-
             print(f"[EZ-VC] Extracting units from source {source_audio_path}...")
             source_units = extract_units(source_audio_path, self.xeus_model, self.apply_kmeans, self.device)
             
             print(f"[EZ-VC] Extracting units from reference {reference_audio_path}...")
             ref_units = extract_units(reference_audio_path, self.xeus_model, self.apply_kmeans, self.device)
-
-            # Offload XEUS back to CPU and free VRAM
-            self.xeus_model.to("cpu")
-            self.apply_kmeans.device = "cpu"
-            self.apply_kmeans.C = self.apply_kmeans.C.to("cpu")
-            self.apply_kmeans.Cnorm = self.apply_kmeans.Cnorm.to("cpu")
-            torch.cuda.empty_cache()
 
         except Exception as e:
             print(f"[EZ-VC] Error extracting units: {e}")
@@ -199,10 +186,6 @@ class EZVCWrapper:
         # 2. Run inference using reference audio as the prompt
         try:
             print(f"[EZ-VC] Running inference...")
-            # Move TTS models to GPU
-            self.model.to(self.device)
-            self.vocoder.to(self.device)
-
             # Note: The ez-vc infer_process might expect specific arguments.
             # We map our wrapper arguments to what f5_tts utils_infer typically expects.
             audio_out, sr_out, _ = infer_process(
@@ -221,11 +204,6 @@ class EZVCWrapper:
                 fix_duration=None,
                 device=self.device
             )
-
-            # Offload TTS models back to CPU and free VRAM
-            self.model.to("cpu")
-            self.vocoder.to("cpu")
-            torch.cuda.empty_cache()
             
             # Save output
             sf.write(output_path, audio_out, sr_out)
