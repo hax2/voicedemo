@@ -87,8 +87,6 @@ class EZVCWrapper:
 
         # Apply monkey-patch to BigVGAN to fix huggingface_hub>=0.24.0 incompatibility
         try:
-            import sys
-            import os
             # EZ-VC path is already handled above, but let's safely import BigVGAN
             ezvc_path = os.path.abspath("EZ-VC")
             if ezvc_path not in sys.path:
