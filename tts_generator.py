@@ -10,14 +10,17 @@ import hashlib
 import json
 import os
 import requests
-import soundfile as sf
-import numpy as np
-import io
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
 
 from sentences.data import get_voice_name
 
 # Cache directory for generated TTS audio
-CACHE_DIR = os.path.join(os.path.dirname(__file__), "cached_tts")
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cached_tts")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Google TTS API endpoint
@@ -49,7 +52,7 @@ def generate_reference_audio(
         str: Path to the generated WAV file.
     """
     if api_key is None:
-        api_key = os.environ.get("GOOGLE_TTS_API_KEY", "")
+        api_key = os.environ.get("GOOGLE_TTS_API_KEY", "").strip()
 
     voice_name = get_voice_name(gender, language_code)
     if not voice_name:
@@ -59,6 +62,9 @@ def generate_reference_audio(
     cache_path = _get_cache_path(text, voice_name)
     if os.path.exists(cache_path):
         return cache_path
+
+    if not api_key or api_key == "your_api_key_here":
+        raise RuntimeError("GOOGLE_TTS_API_KEY is not set. Configure it in .env or environment variables.")
 
     # Build request
     request_body = {
@@ -99,16 +105,7 @@ def generate_reference_audio(
 
 
 def generate_all_references(language_code, gender="male", api_key=None):
-    """Pre-generate reference audio for all sentences in a language.
-
-    Args:
-        language_code: Target language code.
-        gender: Voice gender.
-        api_key: Google Cloud API key.
-
-    Returns:
-        list[dict]: List of {text, focus, audio_path} for each sentence.
-    """
+    """Pre-generate reference audio for all sentences in a language."""
     from sentences.data import get_sentences
 
     sentences = get_sentences(language_code)

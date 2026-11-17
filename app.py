@@ -1,65 +1,109 @@
-"""Accent Trainer — Seed-VC v2 Gradio Demo
+"""Accent Trainer — Multi-Backend Voice Cloning Gradio Demo
 
 A demo application for accent training in language learning.
-Users record their voice, and the system uses Seed-VC v2 to convert
-pre-generated reference audio (correct pronunciation) into the user's
-voice timbre. Users then practice and compare via spectrograms.
+Users record their voice, and the system uses zero-shot voice conversion / cloning
+(Seed-VC v2, EZ-VC, or OmniVoice) to generate ideal pronunciation examples in the
+user's own voice timbre. Users then practice and compare via spectrograms,
+waveforms, and pitch contours.
 
 Reference audio is pre-generated once via generate_references.py and
 shipped as static assets in reference_audio/.
 
 Usage:
-    python app.py [--seed-vc-path ./seed-vc] [--compile] [--no-vc]
+    python app.py [--seed-vc-path ./seed-vc] [--ez-vc-path ./EZ-VC] [--omnivoice-path ./OmniVoice]
+                  [--compile] [--no-vc] [--no-share] [--port 7860]
 """
 
 import argparse
+import html
 import os
 import gradio as gr
-import torch
+import numpy as np
 
-from sentences.data import SENTENCES, get_sentences, get_reference_audio_path
-from audio_analysis import create_spectrogram, create_waveform, create_pitch_contour, create_comparison
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(APP_DIR, ".env"))
+except ImportError:
+    pass
+
+from sentences.data import get_sentences, get_reference_audio_path
+from audio_analysis import (
+    create_spectrogram,
+    create_waveform,
+    create_pitch_contour,
+    create_comparison,
+)
 
 # ──────────────────────────────────────────────
 # Globals
 # ──────────────────────────────────────────────
+NO_VC_MODE = False
+
 vc_wrappers = {
     "Seed-VC v2": None,
     "EZ-VC": None,
-    "OmniVoice": None
+    "OmniVoice": None,
 }
 
-def init_omnivoice():
-    """Initialize OmniVoice model."""
+MODEL_CFG_SETTINGS = {
+    "Seed-VC v2": {
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "value": 0.7,
+        "step": 0.05,
+        "info": "Seed-VC v2 CFG rate (0.0–1.0). Default 0.7 balances intelligibility and voice similarity.",
+    },
+    "EZ-VC": {
+        "minimum": 0.5,
+        "maximum": 3.0,
+        "value": 2.0,
+        "step": 0.1,
+        "info": "EZ-VC CFG strength (0.5–3.0). Higher sticks closer to your voice timbre.",
+    },
+    "OmniVoice": {
+        "minimum": 0.5,
+        "maximum": 4.0,
+        "value": 2.0,
+        "step": 0.1,
+        "info": "OmniVoice guidance scale (0.5–4.0). Default 2.0.",
+    },
+}
+
+
+def init_omnivoice(omnivoice_path=None):
+    """Initialize OmniVoice wrapper (lazy-loaded on first use)."""
     try:
         from omnivoice_wrapper import get_wrapper
-        wrapper = get_wrapper()
-        vc_wrappers["OmniVoice"] = wrapper
+        vc_wrappers["OmniVoice"] = get_wrapper(omnivoice_path=omnivoice_path)
         print("[App] OmniVoice wrapper initialized")
     except Exception as e:
-        print(f"[App] WARNING: Could not load OmniVoice: {e}")
+        print(f"[App] WARNING: Could not initialize OmniVoice wrapper: {e}")
         vc_wrappers["OmniVoice"] = None
 
+
 def init_seed_vc(seed_vc_path=None, compile_model=False):
-    """Initialize Seed-VC v2 model (called once at startup)."""
+    """Initialize Seed-VC v2 wrapper (lazy-loaded on first use)."""
     try:
         from seed_vc_wrapper import get_wrapper
-        wrapper = get_wrapper(seed_vc_path=seed_vc_path, compile_model=compile_model)
-        vc_wrappers["Seed-VC v2"] = wrapper
+        vc_wrappers["Seed-VC v2"] = get_wrapper(
+            seed_vc_path=seed_vc_path, compile_model=compile_model
+        )
         print("[App] Seed-VC v2 wrapper initialized")
     except Exception as e:
-        print(f"[App] WARNING: Could not load Seed-VC v2: {e}")
+        print(f"[App] WARNING: Could not initialize Seed-VC v2 wrapper: {e}")
         vc_wrappers["Seed-VC v2"] = None
 
+
 def init_ez_vc(ez_vc_path=None):
-    """Initialize EZ-VC model (called once at startup)."""
+    """Initialize EZ-VC wrapper (lazy-loaded on first use)."""
     try:
         from ez_vc_wrapper import get_wrapper
-        wrapper = get_wrapper(ez_vc_path=ez_vc_path)
-        vc_wrappers["EZ-VC"] = wrapper
+        vc_wrappers["EZ-VC"] = get_wrapper(ez_vc_path=ez_vc_path)
         print("[App] EZ-VC wrapper initialized")
     except Exception as e:
-        print(f"[App] WARNING: Could not load EZ-VC: {e}")
+        print(f"[App] WARNING: Could not initialize EZ-VC wrapper: {e}")
         vc_wrappers["EZ-VC"] = None
 
 
@@ -68,9 +112,12 @@ def unload_inactive_models(active_model):
     for model_name, wrapper in vc_wrappers.items():
         if model_name == active_model or wrapper is None:
             continue
-        if hasattr(wrapper, "is_loaded") and not wrapper.is_loaded():
-            continue
-        if hasattr(wrapper, "_is_loaded") and not wrapper._is_loaded:
+        is_loaded = False
+        if hasattr(wrapper, "is_loaded"):
+            is_loaded = wrapper.is_loaded()
+        elif hasattr(wrapper, "_is_loaded"):
+            is_loaded = bool(wrapper._is_loaded)
+        if not is_loaded:
             continue
         if hasattr(wrapper, "unload"):
             try:
@@ -84,85 +131,110 @@ def unload_inactive_models(active_model):
 # ──────────────────────────────────────────────
 def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress()):
     """Process voice enrollment and bulk-generate all target sentences."""
-    if audio_path is None:
+    if not audio_path:
         return "❌ Please record or upload a voice sample first.", None
 
-    # Validate audio length
     try:
         import librosa
         y, sr = librosa.load(audio_path, sr=None)
+        if len(y) == 0:
+            return "❌ Uploaded audio file is empty.", None
+
         duration = len(y) / sr
-        if duration < 3:
-            return f"⚠️ Recording is too short ({duration:.1f}s). Please record at least 5 seconds.", None
-        if duration > 30:
+        if duration < 3.0:
+            return f"⚠️ Recording is too short ({duration:.1f}s). Please record at least 3–5 seconds.", None
+        if duration > 30.0:
             return f"⚠️ Recording is too long ({duration:.1f}s). Please keep it under 30 seconds.", None
+        if float(np.max(np.abs(y))) < 1e-4:
+            return "⚠️ Recording appears to be silent. Please check your microphone and try again.", None
 
         status = (
-            f"✅ Voice enrolled successfully!\n"
-            f"📊 Duration: {duration:.1f}s | Sample rate: {sr}Hz\n"
-            f"🗣️ Gender: {gender.title()}\n\n"
+            f"✅ Voice sample validated!\n"
+            f"📊 Duration: {duration:.1f}s | Sample rate: {sr}Hz | Gender: {gender.title()}\n\n"
         )
 
-        if vc_model not in vc_wrappers or vc_wrappers[vc_model] is None:
-            return "❌ Selected VC model is not available. Please check the logs.", None
+        if NO_VC_MODE:
+            status += (
+                "ℹ️ Running in --no-vc fallback mode. Voice conversion is bypassed; "
+                "the Practice tab will play the pre-generated native reference audio."
+            )
+            return status, audio_path
 
-        vc_wrapper = vc_wrappers[vc_model]
+        wrapper = vc_wrappers.get(vc_model)
+        if wrapper is None:
+            return f"❌ Selected VC model ({vc_model}) is not available. Please check server logs.", None
+
         unload_inactive_models(vc_model)
 
-        # Ensure selected model is loaded
-        if hasattr(vc_wrapper, "load"):
-            vc_wrapper.load()
+        try:
+            if hasattr(wrapper, "load"):
+                progress(0.0, desc=f"Loading {vc_model} model...")
+                wrapper.load()
+        except Exception as e:
+            print(f"[App] Error loading {vc_model}: {e}")
+            return f"❌ Could not load {vc_model}:\n{e}", None
 
-        # Check if selected VC model is loaded for bulk generation
-        wrapper = vc_wrappers.get(vc_model)
-        if wrapper is not None:
-            if vc_model == "OmniVoice":
-                status += f"🎙️ {vc_model} active. Registration complete! You can now use Custom TTS in the Practice tab.\n"
-                return status, audio_path
-                
-            status += f"🎙️ {vc_model} active. Bulk-generating all sentences in your voice...\n"
-            print("[App] Starting bulk voice conversion for enrolled voice...")
+        sentences_to_convert = []
+        for lang in ["en-US", "es-ES"]:
+            lang_sentences = get_sentences(lang)
+            for i, s in enumerate(lang_sentences):
+                ref_path = get_reference_audio_path(lang, gender, i)
+                if ref_path and os.path.exists(ref_path):
+                    sentences_to_convert.append((lang, i, ref_path, s["text"]))
 
-            # List of all sentences to convert
-            sentences_to_convert = []
-            for lang in ["en-US", "es-ES"]:
-                lang_sentences = get_sentences(lang)
-                for i, s in enumerate(lang_sentences):
-                    ref_path = get_reference_audio_path(lang, gender, i)
-                    if ref_path and os.path.exists(ref_path):
-                        sentences_to_convert.append((lang, i, ref_path, s["text"]))
+        total = len(sentences_to_convert)
+        if total == 0:
+            status += "⚠️ No reference audio files found to convert."
+            return status, audio_path
 
-            total = len(sentences_to_convert)
-            if total > 0:
-                progress(0, desc="Starting voice conversion...")
-                for idx, (lang, i, ref_path, text) in enumerate(sentences_to_convert):
-                    desc = f"Converting ({lang}) {idx+1}/{total}: {text[:25]}..."
-                    progress(idx / total, desc=desc)
-                    try:
-                        # This runs conversion and caches the output path
-                        if vc_model == "OmniVoice":
-                            wrapper.generate_tts(
-                                text=text,
-                                reference_audio_path=audio_path,
-                                use_cache=True
-                            )
-                        else:
-                            wrapper.convert_voice(
-                                source_audio_path=ref_path,
-                                reference_audio_path=audio_path,
-                                diffusion_steps=25,
-                                length_adjust=1.0,
-                                inference_cfg_rate=cfg_rate,
-                            )
-                    except Exception as e:
-                        print(f"[App] Error bulk-converting sentence {i} in {lang}: {e}")
-                
-                progress(1.0, desc="All conversions complete!")
-                status += f"⚡ Bulk-generation complete! All {total} sentences are pre-converted and will play instantly in the Practice tab."
-            else:
-                status += "⚠️ No reference audio files found to convert."
+        status += f"🎙️ {vc_model} active. Generating {total} practice sentences in your voice...\n"
+        print(f"[App] Starting bulk voice generation ({vc_model}) for {total} sentences...")
+
+        converted_count = 0
+        errors = []
+
+        for idx, (lang, i, ref_path, text) in enumerate(sentences_to_convert):
+            desc = f"Generating ({lang}) {idx + 1}/{total}: {text[:28]}..."
+            progress(idx / total, desc=desc)
+            try:
+                if vc_model == "OmniVoice":
+                    wrapper.generate_tts(
+                        text=text,
+                        reference_audio_path=audio_path,
+                        language=lang,
+                        cfg_rate=cfg_rate,
+                        use_cache=True,
+                    )
+                else:
+                    wrapper.convert_voice(
+                        source_audio_path=ref_path,
+                        reference_audio_path=audio_path,
+                        diffusion_steps=25,
+                        length_adjust=1.0,
+                        inference_cfg_rate=cfg_rate,
+                        use_cache=True,
+                    )
+                converted_count += 1
+            except Exception as e:
+                print(f"[App] Error generating sentence {i + 1} in {lang} with {vc_model}: {e}")
+                errors.append(f"{lang} #{i + 1}: {e}")
+
+        progress(1.0, desc="Complete!")
+
+        if converted_count == 0 and errors:
+            return f"❌ Voice generation failed for {vc_model}:\n{errors[0]}", None
+
+        if errors:
+            status += (
+                f"⚠️ Generated {converted_count}/{total} sentences "
+                f"({len(errors)} failed; first error: {errors[0]})."
+            )
         else:
-            status += f"⚠️ {vc_model} not loaded. Voice conversion is offline (playing raw reference audio)."
+            extra = " Custom TTS is also ready in the Practice tab!" if vc_model == "OmniVoice" else ""
+            status += (
+                f"⚡ Bulk-generation complete! All {converted_count} sentences are ready "
+                f"in the Practice tab.{extra}"
+            )
 
         return status, audio_path
     except Exception as e:
@@ -170,116 +242,135 @@ def enroll_voice(audio_path, gender, vc_model, cfg_rate, progress=gr.Progress())
 
 
 def update_practice_sentences(language, gender, enrolled_audio, vc_model, cfg_rate):
-    """Update all 10 sentence cards in the Practice tab."""
+    """Update all 10 sentence cards in the Practice tab using fast cache lookups."""
     sentences = get_sentences(language)
     outputs = []
-    
     wrapper = vc_wrappers.get(vc_model)
-    import hashlib
-    import os
-    from seed_vc_wrapper import CACHE_DIR
-    
+
     for i in range(10):
         sentence_html_val = ""
         ref_path = None
         ideal_path = None
-        visible = (i < len(sentences))
-        
+        visible = i < len(sentences)
+
         if visible:
             s = sentences[i]
             text = s["text"]
             focus = s["focus"]
             diff = "Beginner" if i < 5 else "Intermediate"
+            escaped_text = html.escape(text)
+            escaped_focus = html.escape(focus)
             sentence_html_val = f"""
             <div style="padding: 10px 15px; border-radius: 6px; background: #1a1a2e; border: 1px solid #162447;">
-                <p style="color: #e94560; font-size: 0.8em; font-weight: bold; text-transform: uppercase; margin: 0 0 3px 0; letter-spacing: 0.5px;">Sentence #{i+1} — {diff}</p>
-                <h3 style="font-size: 1.3em; margin: 0 0 5px 0; color: #ffffff; line-height: 1.2;">{text}</h3>
+                <p style="color: #e94560; font-size: 0.8em; font-weight: bold; text-transform: uppercase; margin: 0 0 3px 0; letter-spacing: 0.5px;">Sentence #{i + 1} — {diff}</p>
+                <h3 style="font-size: 1.3em; margin: 0 0 5px 0; color: #ffffff; line-height: 1.2;">{escaped_text}</h3>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="background: #0f3460; color: #e94560; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; font-weight: bold;">Focus</span>
-                    <p style="color: #c5c5c5; margin: 0; font-size: 0.85em;">{focus}</p>
+                    <p style="color: #c5c5c5; margin: 0; font-size: 0.85em;">{escaped_focus}</p>
                 </div>
             </div>
             """
             ref_path = get_reference_audio_path(language, gender, i)
-            
-            if wrapper is not None and enrolled_audio is not None and ref_path is not None:
+
+            if NO_VC_MODE:
+                ideal_path = ref_path
+            elif wrapper is not None and enrolled_audio:
                 try:
                     if vc_model == "OmniVoice":
-                        ideal_path = wrapper.generate_tts(
+                        ideal_path = wrapper.get_cached_path(
                             text=text,
                             reference_audio_path=enrolled_audio,
-                            use_cache=True
+                            language=language,
+                            cfg_rate=cfg_rate,
                         )
-                    else:
-                        ideal_path = wrapper.convert_voice(
+                    elif ref_path is not None:
+                        ideal_path = wrapper.get_cached_path(
                             source_audio_path=ref_path,
                             reference_audio_path=enrolled_audio,
                             diffusion_steps=25,
                             length_adjust=1.0,
                             inference_cfg_rate=cfg_rate,
-                            use_cache=True
                         )
                 except Exception as e:
-                    print(f"[App] Error generating ideal voice for sentence {i}: {e}")
-                    ideal_path = ref_path
+                    print(f"[App] Cache lookup error for sentence {i}: {e}")
+                    ideal_path = None
 
-            else:
-                ideal_path = ref_path
-        
-        # We append: sentence_html, native_player, cloned_player, attempt_recorder, comparison_plot, comparison_status
         outputs.append(gr.update(value=sentence_html_val, visible=visible))
         outputs.append(gr.update(value=ref_path, visible=visible))
         outputs.append(gr.update(value=ideal_path, visible=visible))
         outputs.append(gr.update(value=None, visible=visible))  # Clear attempt recording
         outputs.append(gr.update(value=None, visible=visible))  # Clear comparison plot
         outputs.append(gr.update(value="", visible=visible))    # Clear comparison status
-        
+
     return outputs
 
 
-def generate_custom_tts(text, enrolled_audio, vc_model):
-    """Generate custom TTS using OmniVoice."""
+def generate_custom_tts(text, language, enrolled_audio, vc_model, cfg_rate):
+    """Generate custom cloned TTS using OmniVoice."""
     if vc_model != "OmniVoice":
-        return None
-    
+        return None, "⚠️ Switch VC Model to OmniVoice to use Custom Sentence Generation."
+
     if not text or not text.strip():
-        return None
-        
-    wrapper = vc_wrappers.get(vc_model)
-    if wrapper is None or enrolled_audio is None:
-        return None
+        return None, "⚠️ Please enter a sentence to synthesize."
+
+    if NO_VC_MODE:
+        return None, "ℹ️ Custom TTS is unavailable in --no-vc fallback mode."
+
+    if not enrolled_audio:
+        return None, "⚠️ Please record/upload and enroll your voice in the Voice Enrollment tab first."
+
+    wrapper = vc_wrappers.get("OmniVoice")
+    if wrapper is None:
+        return None, "❌ OmniVoice wrapper is not available. Please check server logs."
 
     try:
+        unload_inactive_models("OmniVoice")
         ideal_path = wrapper.generate_tts(
-            text=text,
+            text=text.strip(),
             reference_audio_path=enrolled_audio,
-            use_cache=False
+            language=language,
+            cfg_rate=cfg_rate,
+            use_cache=False,
         )
-        return ideal_path
+        return ideal_path, "✅ Custom cloned audio generated!"
     except Exception as e:
         print(f"[App] Error generating custom TTS: {e}")
-        return None
+        return None, f"❌ Error generating custom TTS: {e}"
+
+
+def on_vc_model_change(model_name):
+    """Update CFG slider bounds/defaults and toggle OmniVoice Custom TTS panel."""
+    cfg = MODEL_CFG_SETTINGS.get(model_name, MODEL_CFG_SETTINGS["Seed-VC v2"])
+    slider_update = gr.update(
+        minimum=cfg["minimum"],
+        maximum=cfg["maximum"],
+        value=cfg["value"],
+        step=cfg["step"],
+        info=cfg["info"],
+    )
+    custom_group_update = gr.update(visible=(model_name == "OmniVoice"))
+    return slider_update, custom_group_update
 
 
 def run_comparison(ideal_audio, attempt_audio):
     """Generate comparison visualizations."""
-    if ideal_audio is None and attempt_audio is None:
+    if not ideal_audio and not attempt_audio:
         return (
             create_comparison(None, None),
-            "❌ Please generate ideal audio and record an attempt first."
+            "❌ Please enroll/generate ideal audio and record an attempt first.",
         )
 
     fig = create_comparison(ideal_audio, attempt_audio)
 
     notes = []
-    if ideal_audio is None:
-        notes.append("⚠️ No ideal audio — generate it first")
-    if attempt_audio is None:
-        notes.append("⚠️ No attempt recorded — record yourself speaking the sentence")
+    if not ideal_audio:
+        notes.append("⚠️ No ideal audio yet — enroll your voice in the Voice Enrollment tab first.")
+    if not attempt_audio:
+        notes.append("⚠️ No attempt recorded — record or upload yourself speaking the sentence.")
 
     if not notes:
-        notes.append("✅ Comparison generated! Look at the spectrograms to compare your pronunciation patterns.")
-        notes.append("💡 **Tip:** Similar spectrogram shapes = similar pronunciation. Pay attention to pitch contours and frequency patterns.")
+        notes.append("✅ Comparison generated! Compare the spectrograms, waveforms, and pitch contours.")
+        notes.append("💡 Tip: Similar spectrogram shapes and pitch contours indicate closer pronunciation and intonation.")
 
     return fig, "\n".join(notes)
 
@@ -289,8 +380,6 @@ def run_comparison(ideal_audio, attempt_audio):
 # ──────────────────────────────────────────────
 def build_ui():
     """Build the Gradio Blocks UI."""
-
-    # CSS for premium dark theme
     custom_css = """
     .gradio-container {
         max-width: 1200px !important;
@@ -313,8 +402,10 @@ def build_ui():
     }
     """
 
+    default_cfg = MODEL_CFG_SETTINGS["Seed-VC v2"]
+
     with gr.Blocks(
-        title="Accent Trainer — Seed-VC v2",
+        title="Accent Trainer — AI Voice Cloning",
         theme=gr.themes.Soft(
             primary_hue="red",
             secondary_hue="blue",
@@ -327,16 +418,12 @@ def build_ui():
         gr.HTML("""
             <div style="text-align: center; padding: 20px 0 10px;">
                 <h1 class="main-title">🎯 Accent Trainer</h1>
-                <p class="subtitle">Perfect your pronunciation with AI voice cloning — powered by Seed-VC v2</p>
+                <p class="subtitle">Perfect your pronunciation with AI voice cloning — Seed-VC v2 · EZ-VC · OmniVoice</p>
             </div>
         """)
 
         # ── State ──
         enrolled_audio_state = gr.State(None)
-        enrolled_gender_state = gr.State("male")
-        ideal_audio_state = gr.State(None)
-        vc_model_state = gr.State("Seed-VC v2")
-        cfg_rate_state = gr.State(2.0)
 
         with gr.Tabs():
             # ═══════════════════════════════════════════
@@ -345,10 +432,10 @@ def build_ui():
             with gr.Tab("🎤 Voice Enrollment", id="enrollment"):
                 gr.Markdown("""
                 ### Step 1: Enroll Your Voice
-                Record or upload a **10–25 second** sample of your natural speech.  
+                Record or upload a **5–25 second** sample of your natural speech.  
                 This will be used to clone your voice timbre for ideal pronunciation examples.
                 
-                **Important:** Please read one of the following phrases for your recording:
+                **Suggested enrollment phrases:**
                 - *English:* "Hello, this is my voice and I am reading this sentence to test the system."
                 - *Spanish:* "Hola, esta es mi voz y estoy leyendo esta frase para probar el sistema."
                 """)
@@ -366,18 +453,21 @@ def build_ui():
                             choices=["male", "female"],
                             value="male",
                             label="🗣️ Voice Type",
-                            info="Selects the TTS base voice",
+                            info="Selects the native TTS reference voice",
                         )
                         vc_model_select = gr.Radio(
                             choices=["Seed-VC v2", "EZ-VC", "OmniVoice"],
                             value="Seed-VC v2",
-                            label="⚙️ VC Model",
-                            info="Choose the voice conversion backend"
+                            label="⚙️ VC / Cloning Model",
+                            info="Choose the voice conversion / cloning backend",
                         )
                         cfg_rate_slider = gr.Slider(
-                            minimum=0.5, maximum=3.0, value=2.0, step=0.1,
-                            label="🎚️ CFG Rate",
-                            info="Conditioning strength. Higher = sticks more to your voice."
+                            minimum=default_cfg["minimum"],
+                            maximum=default_cfg["maximum"],
+                            value=default_cfg["value"],
+                            step=default_cfg["step"],
+                            label="🎚️ CFG / Guidance Rate",
+                            info=default_cfg["info"],
                         )
 
                 enroll_btn = gr.Button("✅ Enroll Voice", variant="primary", size="lg")
@@ -391,23 +481,63 @@ def build_ui():
             with gr.Tab("📝 Practice", id="practice"):
                 gr.Markdown("""
                 ### Step 2: Practice Pronunciation
-                Choose your target language. Below is the list of target sentences.
-                Listen to the native reference, compare it to your cloned "ideal" voice, record your attempt, and run the comparison analysis!
+                Choose your target language, listen to the native reference and your cloned "ideal" voice, record your attempt, and run the visual comparison!
                 """)
 
-                # Standard Practice Group (Visible when NOT OmniVoice)
-                with gr.Group(visible=True) as standard_practice_group:
-                    with gr.Row():
-                        language_select = gr.Radio(
-                            choices=[
-                                ("English (for Spanish speakers)", "en-US"),
-                                ("Spanish (for English speakers)", "es-ES"),
-                            ],
-                            value="en-US",
-                            label="🌍 Target Language",
-                        )
+                with gr.Row():
+                    language_select = gr.Radio(
+                        choices=[
+                            ("English (for Spanish speakers)", "en-US"),
+                            ("Spanish (for English speakers)", "es-ES"),
+                        ],
+                        value="en-US",
+                        label="🌍 Target Language",
+                    )
 
-                    # Dynamically build 10 sentence cards
+                # Custom TTS (Visible when OmniVoice is active)
+                with gr.Group(visible=False) as custom_tts_group:
+                    gr.Markdown("### 🗣️ Custom Sentence Generation (OmniVoice)")
+                    with gr.Row():
+                        with gr.Column(scale=3):
+                            custom_tts_text = gr.Textbox(
+                                label="Enter your own sentence to practice",
+                                placeholder="Type any English or Spanish sentence here...",
+                            )
+                        with gr.Column(scale=1):
+                            custom_tts_btn = gr.Button("🗣️ Generate TTS", variant="primary")
+                    custom_tts_status = gr.Textbox(
+                        label="Custom TTS Status", interactive=False, lines=1
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            custom_tts_audio = gr.Audio(
+                                label="🎯 Custom Cloned Audio (Your Voice)",
+                                type="filepath",
+                                interactive=False,
+                            )
+                        with gr.Column(scale=1):
+                            custom_attempt_audio = gr.Audio(
+                                sources=["microphone", "upload"],
+                                type="filepath",
+                                label="🎤 Your Custom Attempt",
+                            )
+                    with gr.Accordion("📊 Custom Sentence Comparison Analysis", open=False):
+                        with gr.Row():
+                            with gr.Column(scale=1):
+                                custom_compare_btn = gr.Button(
+                                    "📊 Analyze & Compare", variant="secondary", size="sm"
+                                )
+                                custom_compare_status = gr.Textbox(
+                                    label="Comparison Notes", interactive=False, lines=3
+                                )
+                            with gr.Column(scale=2):
+                                custom_compare_plot = gr.Plot(
+                                    label="Spectrogram / Pitch Comparison"
+                                )
+                    gr.HTML("<div style='margin-bottom: 25px;'></div>")
+
+                # Curated 10 Practice Sentences
+                with gr.Group(visible=True) as standard_practice_group:
                     sentence_htmls = []
                     native_players = []
                     cloned_players = []
@@ -438,7 +568,7 @@ def build_ui():
                                     cloned_players.append(clone_player)
                                 with gr.Column(scale=1):
                                     attempt_player = gr.Audio(
-                                        sources=["microphone"],
+                                        sources=["microphone", "upload"],
                                         type="filepath",
                                         label="🎤 Your Attempt",
                                     )
@@ -447,7 +577,11 @@ def build_ui():
                             with gr.Accordion("📊 Comparison Analysis", open=False):
                                 with gr.Row():
                                     with gr.Column(scale=1):
-                                        comp_btn = gr.Button("📊 Analyze & Compare", variant="secondary", size="sm")
+                                        comp_btn = gr.Button(
+                                            "📊 Analyze & Compare",
+                                            variant="secondary",
+                                            size="sm",
+                                        )
                                         compare_btns.append(comp_btn)
                                         comp_status = gr.Textbox(
                                             label="Comparison Notes",
@@ -456,20 +590,12 @@ def build_ui():
                                         )
                                         comparison_statuses.append(comp_status)
                                     with gr.Column(scale=2):
-                                        comp_plot = gr.Plot(label="Spectrogram / Pitch Comparison")
+                                        comp_plot = gr.Plot(
+                                            label="Spectrogram / Pitch Comparison"
+                                        )
                                         comparison_plots.append(comp_plot)
 
                             gr.HTML("<div style='margin-bottom: 25px;'></div>")
-
-                # Custom TTS (Visible only when OmniVoice is active)
-                with gr.Group(visible=False) as custom_tts_group:
-                    gr.Markdown("### Custom Sentence Generation (OmniVoice Only)")
-                    with gr.Row():
-                        with gr.Column(scale=3):
-                            custom_tts_text = gr.Textbox(label="Enter your own sentence to practice", placeholder="Type a sentence here...")
-                        with gr.Column(scale=1):
-                            custom_tts_btn = gr.Button("🗣️ Generate TTS")
-                    custom_tts_audio = gr.Audio(label="Custom Cloned Audio", interactive=False)
 
             # ═══════════════════════════════════════════
             # TAB 3: Visualizations
@@ -477,7 +603,7 @@ def build_ui():
             with gr.Tab("📊 Analysis", id="analysis"):
                 gr.Markdown("""
                 ### Detailed Audio Analysis
-                Upload or record audio for detailed spectrogram analysis.
+                Upload or record audio for standalone spectrogram, waveform, and pitch contour analysis.
                 """)
 
                 with gr.Row():
@@ -510,29 +636,19 @@ def build_ui():
                 gr.Markdown("""
                 ### How It Works
                 
-                1. **🗣️ Voice Enrollment** — You record a short sample of your natural speech.
+                1. **🗣️ Voice Enrollment** — Record or upload a short sample of your natural speech.
                 
                 2. **🔊 Pre-generated References** — 10 sentences per language have been 
                    pre-recorded using Google Cloud TTS (Chirp 3 HD voices). These are static 
-                   assets — no API calls happen at runtime.
+                   assets — no external TTS API calls are needed at runtime.
                 
-                3. **🎯 Voice Conversion (Seed-VC v2)** — When you select a sentence, the 
-                   pre-generated reference audio is converted to sound like *your* voice using 
-                   zero-shot voice conversion. Correct pronunciation + your timbre.
+                3. **🎯 Voice Cloning Backends** — Choose between:
+                   - **Seed-VC v2** — Zero-shot diffusion voice conversion preserving native pronunciation + your timbre
+                   - **EZ-VC** — XEUS discrete speech units + F5-TTS flow matching voice conversion
+                   - **OmniVoice** — Omnilingual zero-shot voice-cloning TTS (also unlocks custom text practice!)
                 
                 4. **📊 Comparison** — Record yourself attempting the sentence, then compare
-                   spectrograms, waveforms, and pitch contours side by side.
-                
-                ---
-                
-                ### Technology
-                
-                | Component | Technology |
-                |-----------|-----------|
-                | Voice Conversion | [Seed-VC v2](https://github.com/Plachtaa/seed-vc) — zero-shot diffusion-based VC |
-                | Reference Audio | Google Cloud TTS — Chirp 3 HD (Algenib / Achernar) |
-                | Visualization | Librosa + Matplotlib — mel spectrograms, pitch tracking |
-                | Interface | Gradio Blocks — with `share=True` for remote access |
+                   mel spectrograms, waveforms, and pitch contours side by side.
                 
                 ---
                 
@@ -547,8 +663,6 @@ def build_ui():
         # ──────────────────────────────────────────────
         # Event Listeners & Event Bindings
         # ──────────────────────────────────────────────
-        
-        # Collect outputs for practice tab sentence cards
         practice_outputs = []
         for i in range(10):
             practice_outputs.extend([
@@ -560,6 +674,14 @@ def build_ui():
                 comparison_statuses[i],
             ])
 
+        practice_inputs = [
+            language_select,
+            gender_select,
+            enrolled_audio_state,
+            vc_model_select,
+            cfg_rate_slider,
+        ]
+
         # TAB 1: Voice Enrollment
         enroll_btn.click(
             fn=enroll_voice,
@@ -567,60 +689,55 @@ def build_ui():
             outputs=[enrollment_status, enrolled_audio_state],
         ).then(
             fn=update_practice_sentences,
-            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state, cfg_rate_state],
+            inputs=practice_inputs,
             outputs=practice_outputs,
         )
 
         gender_select.change(
-            fn=lambda g: g,
-            inputs=[gender_select],
-            outputs=[enrolled_gender_state],
+            fn=update_practice_sentences,
+            inputs=practice_inputs,
+            outputs=practice_outputs,
         )
 
-        def toggle_custom_tts(model_name):
-            return gr.update(visible=(model_name == "OmniVoice")), gr.update(visible=(model_name != "OmniVoice"))
-
         vc_model_select.change(
-            fn=lambda m: m,
+            fn=on_vc_model_change,
             inputs=[vc_model_select],
-            outputs=[vc_model_state],
-        ).then(
-            fn=toggle_custom_tts,
-            inputs=[vc_model_select],
-            outputs=[custom_tts_group, standard_practice_group],
+            outputs=[cfg_rate_slider, custom_tts_group],
         ).then(
             fn=update_practice_sentences,
-            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state, cfg_rate_state],
+            inputs=practice_inputs,
+            outputs=practice_outputs,
+        )
+
+        cfg_rate_slider.release(
+            fn=update_practice_sentences,
+            inputs=practice_inputs,
+            outputs=practice_outputs,
+        )
+
+        # TAB 2: Practice
+        language_select.change(
+            fn=update_practice_sentences,
+            inputs=practice_inputs,
             outputs=practice_outputs,
         )
 
         custom_tts_btn.click(
             fn=generate_custom_tts,
-            inputs=[custom_tts_text, enrolled_audio_state, vc_model_state],
-            outputs=[custom_tts_audio]
-        )
-
-        cfg_rate_slider.change(
-            fn=lambda c: c,
-            inputs=[cfg_rate_slider],
-            outputs=[cfg_rate_state],
-        ).then(
-            fn=update_practice_sentences,
-            inputs=[language_select, enrolled_gender_state, enrolled_audio_state, vc_model_state, cfg_rate_state],
-            outputs=practice_outputs,
-        )
-
-        # TAB 2: Practice (Sentence events: language changes and comparison clicks)
-        language_select.change(
-            fn=update_practice_sentences,
             inputs=[
+                custom_tts_text,
                 language_select,
-                enrolled_gender_state,
                 enrolled_audio_state,
-                vc_model_state,
-                cfg_rate_state,
+                vc_model_select,
+                cfg_rate_slider,
             ],
-            outputs=practice_outputs,
+            outputs=[custom_tts_audio, custom_tts_status],
+        )
+
+        custom_compare_btn.click(
+            fn=run_comparison,
+            inputs=[custom_tts_audio, custom_attempt_audio],
+            outputs=[custom_compare_plot, custom_compare_status],
         )
 
         for i in range(10):
@@ -637,23 +754,17 @@ def build_ui():
             outputs=[spec_plot, wave_plot, pitch_plot],
         )
 
-        # Trigger initial load on app startup
+        # Initial load
         demo.load(
             fn=update_practice_sentences,
-            inputs=[
-                language_select,
-                enrolled_gender_state,
-                enrolled_audio_state,
-                vc_model_state,
-                cfg_rate_state,
-            ],
+            inputs=practice_inputs,
             outputs=practice_outputs,
         )
 
         # ── Footer ──
         gr.HTML("""
             <div style="text-align: center; padding: 20px; color: #666; font-size: 0.9em;">
-                Accent Trainer Demo — Built with Seed-VC v2 & Google Cloud TTS
+                Accent Trainer Demo — Built with Seed-VC v2, EZ-VC, OmniVoice & Google Cloud TTS
             </div>
         """)
 
@@ -664,38 +775,57 @@ def build_ui():
 # Main
 # ──────────────────────────────────────────────
 def main():
+    global NO_VC_MODE
+
     parser = argparse.ArgumentParser(description="Accent Trainer Demo")
-    parser.add_argument("--seed-vc-path", type=str, default=None,
-                        help="Path to cloned seed-vc repo")
-    parser.add_argument("--ez-vc-path", type=str, default=None,
-                        help="Path to cloned EZ-VC repo")
-    parser.add_argument("--compile", action="store_true",
-                        help="Use torch.compile for faster inference")
-    parser.add_argument("--no-vc", action="store_true",
-                        help="Skip loading Seed-VC (reference-audio-only mode for testing)")
-    parser.add_argument("--port", type=int, default=7860,
-                        help="Port for Gradio server")
+    parser.add_argument(
+        "--seed-vc-path", type=str, default=None, help="Path to cloned seed-vc repo"
+    )
+    parser.add_argument(
+        "--ez-vc-path", type=str, default=None, help="Path to cloned EZ-VC repo"
+    )
+    parser.add_argument(
+        "--omnivoice-path", type=str, default=None, help="Path to cloned OmniVoice repo"
+    )
+    parser.add_argument(
+        "--compile", action="store_true", help="Use torch.compile for faster Seed-VC inference"
+    )
+    parser.add_argument(
+        "--no-vc",
+        action="store_true",
+        help="Skip loading VC models (reference-audio-only fallback mode for testing)",
+    )
+    parser.add_argument(
+        "--no-share",
+        action="store_true",
+        help="Disable Gradio public share tunnel",
+    )
+    parser.add_argument(
+        "--port", type=int, default=7860, help="Port for Gradio server"
+    )
     args = parser.parse_args()
 
-    # Load VC models
-    if not args.no_vc:
+    NO_VC_MODE = bool(args.no_vc)
+
+    if not NO_VC_MODE:
         init_seed_vc(seed_vc_path=args.seed_vc_path, compile_model=args.compile)
         init_ez_vc(ez_vc_path=args.ez_vc_path)
-        init_omnivoice()
+        init_omnivoice(omnivoice_path=args.omnivoice_path)
     else:
         print("[App] Running in reference-audio-only mode (--no-vc flag set)")
 
-    # Build and launch Gradio app
     demo = build_ui()
     try:
         demo.queue(default_concurrency_limit=1, max_size=20)
     except TypeError:
         demo.queue(concurrency_count=1, max_size=20)
+
     demo.launch(
-        share=True,
+        share=not args.no_share,
         server_name="0.0.0.0",
         server_port=args.port,
         show_error=True,
+        allowed_paths=[APP_DIR],
     )
 
 

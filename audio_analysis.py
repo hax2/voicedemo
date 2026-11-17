@@ -8,6 +8,8 @@ import librosa
 import librosa.display
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server use
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -25,25 +27,29 @@ plt.rcParams.update({
 })
 
 
+def _new_figure(nrows=1, ncols=1, figsize=(10, 4)):
+    """Create a standalone Agg-backed Figure without leaking into pyplot's global state."""
+    fig = Figure(figsize=figsize, facecolor='#1a1a2e')
+    FigureCanvasAgg(fig)
+    axes = fig.subplots(nrows, ncols)
+    return fig, axes
+
+
 def create_spectrogram(audio_path, title="Spectrogram"):
-    """Create a mel spectrogram visualization.
-
-    Args:
-        audio_path: Path to audio file.
-        title: Plot title.
-
-    Returns:
-        matplotlib.figure.Figure
-    """
-    if audio_path is None:
+    """Create a mel spectrogram visualization."""
+    if not audio_path:
         return _empty_figure("No audio provided")
 
     try:
         y, sr = librosa.load(audio_path, sr=22050)
-        S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
-        S_dB = librosa.power_to_db(S, ref=np.max)
+        if len(y) == 0:
+            return _empty_figure("Audio file is empty")
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+        S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
+        ref = np.max(S) if np.max(S) > 0 else 1.0
+        S_dB = librosa.power_to_db(S, ref=ref)
+
+        fig, ax = _new_figure(1, 1, figsize=(10, 4))
         img = librosa.display.specshow(
             S_dB, sr=sr, x_axis='time', y_axis='mel',
             ax=ax, cmap='magma'
@@ -59,25 +65,20 @@ def create_spectrogram(audio_path, title="Spectrogram"):
 
 
 def create_waveform(audio_path, title="Waveform"):
-    """Create a waveform visualization.
-
-    Args:
-        audio_path: Path to audio file.
-        title: Plot title.
-
-    Returns:
-        matplotlib.figure.Figure
-    """
-    if audio_path is None:
+    """Create a waveform visualization."""
+    if not audio_path:
         return _empty_figure("No audio provided")
 
     try:
         y, sr = librosa.load(audio_path, sr=22050)
-        duration = len(y) / sr
+        if len(y) == 0:
+            return _empty_figure("Audio file is empty")
+
+        duration = max(len(y) / sr, 1e-3)
         time_axis = np.linspace(0, duration, len(y))
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 3))
-        ax.plot(time_axis, y, color='#0f3460', linewidth=0.5, alpha=0.8)
+        fig, ax = _new_figure(1, 1, figsize=(10, 3))
+        ax.plot(time_axis, y, color='#5ac8fa', linewidth=0.6, alpha=0.85)
         ax.fill_between(time_axis, y, alpha=0.3, color='#e94560')
         ax.set_title(title, fontsize=14, fontweight='bold', color='#e94560')
         ax.set_xlabel('Time (s)', fontsize=11)
@@ -91,28 +92,23 @@ def create_waveform(audio_path, title="Waveform"):
 
 
 def create_pitch_contour(audio_path, title="Pitch Contour"):
-    """Create a pitch (F0) contour visualization.
-
-    Args:
-        audio_path: Path to audio file.
-        title: Plot title.
-
-    Returns:
-        matplotlib.figure.Figure
-    """
-    if audio_path is None:
+    """Create a pitch (F0) contour visualization."""
+    if not audio_path:
         return _empty_figure("No audio provided")
 
     try:
         y, sr = librosa.load(audio_path, sr=22050)
-        f0, voiced_flag, voiced_probs = librosa.pyin(
+        if len(y) == 0:
+            return _empty_figure("Audio file is empty")
+
+        f0, _, _ = librosa.pyin(
             y, fmin=librosa.note_to_hz('C2'),
             fmax=librosa.note_to_hz('C7'),
             sr=sr
         )
         times = librosa.times_like(f0, sr=sr)
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 3))
+        fig, ax = _new_figure(1, 1, figsize=(10, 3))
         ax.plot(times, f0, color='#e94560', linewidth=2, label='F0')
         ax.set_title(title, fontsize=14, fontweight='bold', color='#e94560')
         ax.set_xlabel('Time (s)', fontsize=11)
@@ -132,32 +128,24 @@ def create_comparison(ideal_path, attempt_path):
     - Row 1: Mel spectrograms (ideal vs attempt)
     - Row 2: Waveforms (ideal vs attempt)
     - Row 3: Pitch contours (ideal vs attempt)
-
-    Args:
-        ideal_path: Path to ideal (VC'd) audio.
-        attempt_path: Path to user's attempt audio.
-
-    Returns:
-        matplotlib.figure.Figure
     """
-    if ideal_path is None and attempt_path is None:
+    if not ideal_path and not attempt_path:
         return _empty_figure("No audio to compare")
 
-    fig, axes = plt.subplots(3, 2, figsize=(16, 12))
+    fig, axes = _new_figure(3, 2, figsize=(16, 12))
     fig.suptitle('Pronunciation Comparison', fontsize=18,
                  fontweight='bold', color='#e94560', y=0.98)
 
-    # Column labels
-    axes[0, 0].set_title('🎯 Ideal Pronunciation', fontsize=13,
+    axes[0, 0].set_title('Ideal Pronunciation (Cloned)', fontsize=13,
                           fontweight='bold', color='#53d769')
-    axes[0, 1].set_title('🎤 Your Attempt', fontsize=13,
+    axes[0, 1].set_title('Your Attempt', fontsize=13,
                           fontweight='bold', color='#5ac8fa')
 
     for col, (audio_path, label) in enumerate([
         (ideal_path, 'Ideal'),
         (attempt_path, 'Attempt')
     ]):
-        if audio_path is None:
+        if not audio_path:
             for row in range(3):
                 axes[row, col].text(
                     0.5, 0.5, f'No {label.lower()} audio',
@@ -170,11 +158,14 @@ def create_comparison(ideal_path, attempt_path):
 
         try:
             y, sr = librosa.load(audio_path, sr=22050)
-            duration = len(y) / sr
+            if len(y) == 0:
+                raise ValueError("Empty audio")
+            duration = max(len(y) / sr, 1e-3)
 
             # Row 0: Mel Spectrogram
             S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
-            S_dB = librosa.power_to_db(S, ref=np.max)
+            ref = np.max(S) if np.max(S) > 0 else 1.0
+            S_dB = librosa.power_to_db(S, ref=ref)
             librosa.display.specshow(
                 S_dB, sr=sr, x_axis='time', y_axis='mel',
                 ax=axes[0, col], cmap='magma'
@@ -215,7 +206,7 @@ def create_comparison(ideal_path, attempt_path):
 
 def _empty_figure(message):
     """Create an empty figure with a message."""
-    fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    fig, ax = _new_figure(1, 1, figsize=(10, 4))
     ax.text(
         0.5, 0.5, message,
         ha='center', va='center', fontsize=14,
