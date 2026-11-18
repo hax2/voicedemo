@@ -75,7 +75,9 @@ python app.py --no-vc --no-share
 | `--compile` | Off | Enables `torch.compile` for Seed-VC v2 AR inference |
 | `--no-vc` | Off | Bypasses VC model loading and plays raw native reference audio |
 | `--no-share` | Off | Disables Gradio's public `gradio.live` share link |
+| `--host` | `0.0.0.0` | Server bind address (use `127.0.0.1` behind a reverse proxy) |
 | `--port` | `7860` | Gradio server port |
+| `--root-path` | `None` | Public subpath mount point behind Nginx/Caddy (or via `GRADIO_ROOT_PATH`) |
 
 ---
 

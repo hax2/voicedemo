@@ -11,7 +11,7 @@ shipped as static assets in reference_audio/.
 
 Usage:
     python app.py [--seed-vc-path ./seed-vc] [--ez-vc-path ./EZ-VC] [--omnivoice-path ./OmniVoice]
-                  [--compile] [--no-vc] [--no-share] [--port 7860]
+                  [--compile] [--no-vc] [--no-share] [--host 127.0.0.1] [--port 7860] [--root-path /verba/voicedemo]
 """
 
 import argparse
@@ -772,6 +772,38 @@ def build_ui():
 
 
 # ──────────────────────────────────────────────
+# Reverse-proxy subpath helper
+# ──────────────────────────────────────────────
+def _enable_proxy_subpath_support():
+    """Honor X-Forwarded-Prefix and HTTPS ingress headers behind Caddy/Nginx."""
+    try:
+        from gradio import route_utils
+
+        if getattr(route_utils, "_ging_proxy_patched", False):
+            return
+        orig_get_root_url = route_utils.get_root_url
+
+        def patched_get_root_url(request, route_path, root_path):
+            forwarded_prefix = request.headers.get("x-forwarded-prefix", "").strip()
+            effective_root = forwarded_prefix or root_path
+            url = orig_get_root_url(request, route_path, effective_root)
+            host = (
+                request.headers.get("x-forwarded-host")
+                or request.headers.get("host")
+                or ""
+            ).split(",")[0].strip()
+            proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+            if proto == "https" or host.endswith(".dit.upm.es"):
+                url = url.replace("http://", "https://", 1)
+            return url
+
+        route_utils.get_root_url = patched_get_root_url
+        route_utils._ging_proxy_patched = True
+    except Exception as e:
+        print(f"[App] Note: Could not install proxy subpath helper: {e}")
+
+
+# ──────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────
 def main():
@@ -801,11 +833,27 @@ def main():
         help="Disable Gradio public share tunnel",
     )
     parser.add_argument(
-        "--port", type=int, default=7860, help="Port for Gradio server"
+        "--host",
+        type=str,
+        default=os.environ.get("HOST", "0.0.0.0"),
+        help="Bind address for Gradio server (use 127.0.0.1 behind reverse proxy)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", "7860")),
+        help="Port for Gradio server",
+    )
+    parser.add_argument(
+        "--root-path",
+        type=str,
+        default=os.environ.get("GRADIO_ROOT_PATH", None),
+        help="Public subpath mount point when behind a reverse proxy (e.g. /verba/voicedemo)",
     )
     args = parser.parse_args()
 
     NO_VC_MODE = bool(args.no_vc)
+    _enable_proxy_subpath_support()
 
     if not NO_VC_MODE:
         init_seed_vc(seed_vc_path=args.seed_vc_path, compile_model=args.compile)
@@ -822,8 +870,9 @@ def main():
 
     demo.launch(
         share=not args.no_share,
-        server_name="0.0.0.0",
+        server_name=args.host,
         server_port=args.port,
+        root_path=args.root_path,
         show_error=True,
         allowed_paths=[APP_DIR],
     )
